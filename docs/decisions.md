@@ -99,6 +99,14 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **Math:** `math` covers add, subtract, multiply, and divide with a constant or another column; scaling and unit conversion use multiply. A cell that is not a plain number, or a division by zero, is counted as failed. In a new column it stays empty; when overwriting, the original value is kept so no data is lost. Rounding uses decimal exponents (1.005 → 1.01) and rounds halves away from zero.
 - **Window transforms** write their result in a new column and never move rows. Sorting for `orderBy` is stable; numbers compare as numbers, other values as text, and empty cells sort last. All window transforms and `dedupe` are `wholeFile`, so their preview is marked "sample only".
 
+## Pipeline model
+
+- **Step IDs** are `s1`, `s2`, … from a counter, so a removed step's ID is never reused. Positions in tools are 1-based.
+- **Parameters are validated** when a step is added or changed: unknown transform, wrong types, and unknown keys (often a typo) are refused with the transform's usage text, so the LLM can correct itself.
+- **`updateStep` merges** the new parameters into the old ones; `null` removes a parameter. An edited automatic step is no longer marked automatic.
+- **A run stops at the first failing step.** The steps after it are marked skipped, because they would see a different table.
+- **Safe steps** come from the profile, only for the affected columns, in this order: remove invisible characters, trim, collapse spaces, drop empty rows.
+
 ## Risks and limitations
 
 - **Prompt injection through CSV cells.** The LLM sees only the profile and samples, marked as data. Its output is limited to validated steps from a closed list.

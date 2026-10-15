@@ -45,6 +45,7 @@ One line per file or module. Keep this list current.
 - `src/profile.ts`: builds a dataset profile from parsed rows: column types, counts, samples, and detected issues.
 - `src/table.ts`: the `Table` the pipeline works on (unique column names, padded rows) and number helpers.
 - `src/transforms/`: one file per transform group (`text`, `values`, `rows`, `columns`, `math`, `window`). `core.ts` has the step context that looks up columns and records changes; `index.ts` is the registry of all transforms.
+- `src/pipeline.ts`: pipeline model: validate, add, update, remove, and move steps; run steps on a table; build a preview; pick the safe steps for a profile.
 - `src/app.tsx`: chat UI: per-browser user ID, CSV upload (button and drag and drop), profile panel, messages.
 - `src/profile-panel.tsx`: shows the latest upload's status, file issues, and a table of columns with types, counts, and issues.
 - `src/limits.ts`: upload size and column limits, shared by the Worker and the browser (kept apart so the browser does not bundle the parser).
