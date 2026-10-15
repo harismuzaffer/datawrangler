@@ -34,8 +34,11 @@ How the code is organized and how to write it. Read this before changing code. U
 
 One line per file or module. Keep this list current.
 
-- `src/server.ts`: Worker entry and `CobblerAgent` (chat loop, LLM call, tools).
-- `src/prompts.ts`: system prompt (and later the tool definitions).
+- `src/server.ts`: Worker entry and `CobblerAgent`: chat loop, LLM call and tools, upload route, `datasets` table, synced state, workflow callbacks.
+- `src/prompts.ts`: system prompt.
+- `src/upload.ts`: upload checks: body size limit while reading, binary-file check, file name and user ID schemas.
+- `src/profile-workflow.ts`: `ProfileWorkflow`: reads a CSV from R2, profiles it, reports the profile to the agent.
+- `src/profile-summary.ts`: shrinks a profile to fit the LLM's context.
 - `src/ai-binding.ts`: wraps the Workers AI binding to fix duplicated fields in streamed responses (a provider bug).
 - `src/csv.ts`: decodes file bytes (BOM, UTF-8, UTF-16, Windows-1252 fallback) and parses CSV with Papa Parse (delimiter detection, quoted fields).
 - `src/profile.ts`: builds a dataset profile from parsed rows: column types, counts, samples, and detected issues.
@@ -47,4 +50,5 @@ One line per file or module. Keep this list current.
 
 A few steps per flow, once it exists.
 
-- **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.
+- **Upload and profile:** browser `POST /agents/cobbler-agent/{userId}/upload?name=…` -> `CobblerAgent.onRequest` checks size and type -> R2 `{userId}/{datasetId}/v0.csv` -> `datasets` row with status `profiling` -> `ProfileWorkflow` (instance ID = dataset ID) -> `onWorkflowComplete` stores the profile, or `onWorkflowError` stores the error -> state sync tells the browser.
+- **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed (`getProfile` reads the latest profile from SQLite) -> reply streamed back. Messages persist in the agent's SQLite storage.

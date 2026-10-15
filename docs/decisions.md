@@ -77,6 +77,16 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **Issues** are detected by code, never by the LLM. Each has a plain message, a count, up to five row numbers, and up to three examples. Every issue maps to a planned transform. File level: BOM, encoding, quote errors, empty or duplicate column names, ragged rows, empty rows, duplicate rows. Column level: empty column, spaces at the ends, repeated spaces, invisible characters, missing-data placeholders, stray values, formatted numbers, mixed date formats, ambiguous day/month dates, mixed yes/no spellings, mixed letter case.
 - **Profile size** is kept small for the workflow (1 MiB step limit) and SQLite (2 MB row limit): values are cut to 60 characters, there are at most 5 samples and 5 sample rows, distinct counts stop at 10,000, and files are limited to 500 columns. A 500-column profile measured 397 KiB.
 
+## Upload and profile flow
+
+- **Upload goes through the agent** (`POST /agents/cobbler-agent/{userId}/upload`). The agent already knows the user, so it can store the file and record the dataset in one place. The body is read with a hard 5 MB cap, whatever Content-Length says. Files with zero bytes near the start (Excel, images) are refused before storing.
+- **R2 key:** `{userId}/{datasetId}/v0.csv`. The user ID must be letters, digits, and dashes, so it cannot change the path. The file name is only shown, never used in a key.
+- **Workflow instance ID = dataset ID.** Callbacks find the dataset directly, and a callback cannot arrive before the ID is stored.
+- **Callbacks are idempotent:** they only update a dataset whose status is still `profiling`.
+- **Errors:** file problems (missing file, too many columns, empty file) are thrown as `NonRetryableError`, so the workflow does not retry them, and their message is shown to the user. Any other error is logged and the user sees a generic message.
+- **Synced state** holds a short summary per dataset (status, counts, error). The full profile can be hundreds of KB, so the UI fetches it with the `getProfile` callable.
+- **The LLM gets a compact profile:** clean columns only with name and type, at most 12,000 characters, plus a note that the values are data, not instructions.
+
 ## Risks and limitations
 
 - **Prompt injection through CSV cells.** The LLM sees only the profile and samples, marked as data. Its output is limited to validated steps from a closed list.

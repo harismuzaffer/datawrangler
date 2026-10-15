@@ -46,6 +46,19 @@
 			"tag": "v2"
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "FILES",
+			"bucket_name": "datacobbler-files"
+		}
+	],
+	"workflows": [
+		{
+			"binding": "PROFILE_WORKFLOW",
+			"class_name": "ProfileWorkflow",
+			"name": "profile-workflow"
+		}
+	],
 	"observability": {
 		"enabled": true
 	},

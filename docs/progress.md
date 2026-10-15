@@ -9,14 +9,11 @@
 
 ## Next
 
-- User checks goal 1 in `npm run dev`.
-- Goal 2: upload a CSV (up to 5 MB) to R2, parse it, and show a profile.
+- Goal 2 (in progress): CSV parsing and profiling done; upload to R2, profile workflow, and `getProfile` tool done (checked end to end in `npm run dev`). Next: upload button, per-user ID, and profile panel in the UI.
 
 ## Not started
 
 - Per-user agent ID in the UI (all browsers share one agent today).
-- Upload to R2 and dataset records.
-- Profile workflow.
 - Pipeline storage, editing tools, preview.
 - Full run workflow and download.
 - Pipeline export and import.

@@ -4,7 +4,7 @@ A chat agent that cleans and reshapes messy CSV files. You upload a CSV and chat
 
 Built on Cloudflare: [Agents SDK](https://developers.cloudflare.com/agents/) (`AIChatAgent`), [Workers AI](https://developers.cloudflare.com/workers-ai/), [Workflows](https://developers.cloudflare.com/workflows/), Durable Objects, and R2.
 
-> **Status:** early. The chat agent runs. CSV upload, pipelines, and cleaning are not built yet. See [docs/progress.md](docs/progress.md).
+> **Status:** early. The chat agent runs. CSV upload and profiling work. Pipelines and cleaning are not built yet. See [docs/progress.md](docs/progress.md).
 
 ## Architecture
 
@@ -57,11 +57,19 @@ Open [http://localhost:5173](http://localhost:5173).
 
 ## Deploy
 
-```bash
-npm run deploy
-```
+1. Create the R2 bucket (first deploy only):
 
-This builds the app and deploys the Worker to your Cloudflare account.
+   ```bash
+   npx wrangler r2 bucket create datacobbler-files
+   ```
+
+2. Build and deploy the Worker:
+
+   ```bash
+   npm run deploy
+   ```
+
+Parsing a 5 MB file needs about 1 s of CPU, so large uploads need the Workers Paid plan. See [docs/decisions.md](docs/decisions.md#risks-and-limitations).
 
 ## Docs
 
