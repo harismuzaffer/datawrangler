@@ -1,3 +1,4 @@
+import { asSchema } from "ai";
 import { describe, expect, it } from "vitest";
 import { parseCsv } from "./csv";
 import { emptyPipeline, safePipeline, type Pipeline } from "./pipeline";
@@ -221,6 +222,36 @@ describe("position input", () => {
         stepId: "s1",
         position: "first"
       }).success
+    ).toBe(false);
+  });
+});
+
+describe("tool schemas sent to the model", () => {
+  it("leave params open, so the model may send any parameter names", async () => {
+    const tools = createTools(fakeHost().host);
+    const schema = (await asSchema(tools.addStep.inputSchema).jsonSchema) as {
+      properties: { params: { additionalProperties?: unknown } };
+    };
+    expect(schema.properties.params.additionalProperties).not.toBe(false);
+  });
+
+  it("still validate input with zod", async () => {
+    const tools = createTools(fakeHost().host);
+    const result = await asSchema(tools.moveStep.inputSchema).validate?.({
+      stepId: "s1",
+      position: "2"
+    });
+    expect(result).toEqual({
+      success: true,
+      value: { stepId: "s1", position: 2 }
+    });
+    expect(
+      (
+        await asSchema(tools.moveStep.inputSchema).validate?.({
+          stepId: "s1",
+          position: 0
+        })
+      )?.success
     ).toBe(false);
   });
 });

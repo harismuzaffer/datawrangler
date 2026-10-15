@@ -1,4 +1,5 @@
-import { tool } from "ai";
+import { jsonSchema, tool, type JSONSchema7 } from "ai";
+import { z } from "zod";
 import {
   addStep,
   buildPreview,
@@ -113,11 +114,34 @@ async function editPipeline(
   };
 }
 
+/**
+ * Turns a zod schema into a tool input schema, validated by zod.
+ * The AI SDK's own zod conversion marks every object "additionalProperties: false", which tells the model
+ * that `params` must be empty. Llama then cannot make a valid tool call and writes it as text instead.
+ * Converting with zod keeps `params` open; validation is still done by the same zod schema.
+ */
+function toolSchema<S extends z.ZodType>(schema: S) {
+  const { $schema: _, ...json } = z.toJSONSchema(schema, {
+    io: "input",
+    target: "draft-7"
+  });
+  // Zod writes draft-7 JSON schema here; its TypeScript type is just wider than JSONSchema7.
+  return jsonSchema<z.output<S>>(json as JSONSchema7, {
+    validate: (value) => {
+      const result = schema.safeParse(value);
+      return result.success
+        ? { success: true, value: result.data }
+        : { success: false, error: result.error };
+    }
+  });
+}
+
 /** Builds the LLM tools for one chat turn. */
 export function createTools(host: ToolHost) {
   return {
     getProfile: tool({
-      ...TOOL_SPECS.getProfile,
+      description: TOOL_SPECS.getProfile.description,
+      inputSchema: toolSchema(TOOL_SPECS.getProfile.inputSchema),
       execute: async () => {
         const dataset = readyDataset(host);
         if ("error" in dataset) return dataset;
@@ -137,7 +161,8 @@ export function createTools(host: ToolHost) {
     }),
 
     addStep: tool({
-      ...TOOL_SPECS.addStep,
+      description: TOOL_SPECS.addStep.description,
+      inputSchema: toolSchema(TOOL_SPECS.addStep.inputSchema),
       execute: ({ op, params, position }) =>
         editPipeline(host, (pipeline) => {
           const added = addStep(pipeline, op, params, position);
@@ -146,7 +171,8 @@ export function createTools(host: ToolHost) {
     }),
 
     updateStep: tool({
-      ...TOOL_SPECS.updateStep,
+      description: TOOL_SPECS.updateStep.description,
+      inputSchema: toolSchema(TOOL_SPECS.updateStep.inputSchema),
       execute: ({ stepId, params }) =>
         editPipeline(host, (pipeline) => ({
           pipeline: updateStep(pipeline, stepId, params),
@@ -155,7 +181,8 @@ export function createTools(host: ToolHost) {
     }),
 
     removeStep: tool({
-      ...TOOL_SPECS.removeStep,
+      description: TOOL_SPECS.removeStep.description,
+      inputSchema: toolSchema(TOOL_SPECS.removeStep.inputSchema),
       execute: ({ stepId }) =>
         editPipeline(host, (pipeline) => ({
           pipeline: removeStep(pipeline, stepId)
@@ -163,7 +190,8 @@ export function createTools(host: ToolHost) {
     }),
 
     moveStep: tool({
-      ...TOOL_SPECS.moveStep,
+      description: TOOL_SPECS.moveStep.description,
+      inputSchema: toolSchema(TOOL_SPECS.moveStep.inputSchema),
       execute: ({ stepId, position }) =>
         editPipeline(host, (pipeline) => ({
           pipeline: moveStep(pipeline, stepId, position),
@@ -172,7 +200,8 @@ export function createTools(host: ToolHost) {
     }),
 
     previewPipeline: tool({
-      ...TOOL_SPECS.previewPipeline,
+      description: TOOL_SPECS.previewPipeline.description,
+      inputSchema: toolSchema(TOOL_SPECS.previewPipeline.inputSchema),
       execute: async ({ upToStepId }) => {
         const dataset = readyDataset(host);
         if ("error" in dataset) return dataset;

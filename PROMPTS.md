@@ -56,3 +56,13 @@ Upload and profile implementations. Upload a CSV of up to 5 MB to R2, parse it, 
 ## 2026-10-15 21:21 IST
 
 /goal lets move to a bigger goal - implement the pipeline core. Store pipelines in the agent, add the transforms, and add the addStep, updateStep, removeStep, moveStep, and previewPipeline tools.
+
+## 2026-10-15 21:42 IST
+
+"with Llama 3.3, the tools often don't run, because the model writes its tool calls as plain text instead of making them"
+
+what do you mean by "instead of making them".
+
+## 2026-10-15 21:45 IST
+
+check if the llama issue is actual the model's tool-calling configuration issue. if so, lets fix the configuration and check if it works.

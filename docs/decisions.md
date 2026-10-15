@@ -77,7 +77,9 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 
 - **Model:** `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Reason: it works on the free plan. The starter's Kimi model needs a paid plan.
 - **Stream fix (`src/ai-binding.ts`).** `workers-ai-provider` (3.3.1, and still in 4.0.0) duplicates text and tool-call arguments when streaming from models that send each chunk in both OpenAI and native Workers AI formats (Llama, Qwen, Mistral). Tool calls then fail to parse, and the model never answers. We wrap the AI binding and drop the native copies when the OpenAI-style delta is present. Other chunks pass through unchanged, so any model can be used. Tested by hand with Llama 3.3, Llama 4 Scout, Qwen3, Mistral Small 3.1, gpt-oss-120b, and GLM-4.7-flash.
-- **Tool calling differs a lot by model** (tested on 2026-10-15 with the same prompt, tools, and messy file: "make city title case, normalize amount, remove duplicates, then preview"). Llama 3.3 70B wrote its tool calls as plain text, so nothing ran. Mistral Small 3.1 (14 s), gpt-oss-120b (24 s), and GLM-4.7-flash (39 s) did every step right. Qwen3 30B did too, but showed its `<think>` text in the reply. Llama 4 Scout added steps twice and sent invalid input.
+- **Tool calling differs a lot by model** (tested on 2026-10-15 with the same prompt, tools, and messy file: "make city title case, normalize amount, remove duplicates, then preview"). Before the schema fix below, Llama 3.3 70B wrote its tool calls as plain text, so nothing ran. Mistral Small 3.1 (14 s), gpt-oss-120b (24 s), and GLM-4.7-flash (39 s) did every step right. Qwen3 30B did too, but showed its `<think>` text in the reply. Llama 4 Scout added steps twice and sent invalid input.
+- **Tool schemas are converted with zod, not by the AI SDK.** The AI SDK's zod conversion sets `additionalProperties: false` on every object, so the model was told `addStep.params` must be empty. Llama follows the schema strictly, could not make a valid call, and wrote the call as text instead (8 of 8 times through the AI SDK). With the same request but an open `params` schema, sent directly to Workers AI, Llama made proper tool calls 11 of 12 times when streaming and 15 of 16 times when not. `src/tools.ts` now builds each tool's JSON schema with `z.toJSONSchema` and passes it through the AI SDK's `jsonSchema()` with zod validation. The request the agent sends now matches the direct one exactly. Not yet confirmed through the agent, because the free daily Workers AI allowance ran out during testing.
+- **Llama 3.3 still leaks sometimes** (about 1 in 8 in direct tests): when it tries several tool calls in one reply, Workers AI may return them as text. Settings did not change this (`max_tokens`, `parallel_tool_calls`, `temperature`).
 - **Remove the fix** when the provider reads only one format. To check: remove the wrapper and ask the agent for the weather with a Llama model.
 
 ## CSV parsing and profile
@@ -127,10 +129,11 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **Workflow steps can retry.** Each step writes to a fixed R2 key. The agent ignores duplicate reports from the same run and step.
 - **No auth.** The user is a random UUID kept in browser storage (`datacobbler-user-id`); it names the user's agent. Anyone who knows the ID can open that agent, including its `get-messages` endpoint. If the browser data is cleared, the user loses access to their data. Pipeline export reduces the impact. Old uploads need an R2 lifecycle rule.
 - **CPU time on the free plan.** Parsing and profiling cost about 1 s of CPU for a 5 MB file (measured in Node: 1.3 s for 7 MB, 90,000 rows). Workers Free allows 10 ms of CPU per request and per workflow step, so large files will fail when deployed on the free plan. `npm run dev` does not enforce the limit. Workers Paid allows 30 s by default. Options if this matters: the paid plan, or a much smaller upload limit on free.
+- **Free daily allowance.** The free plan includes 10,000 Workers AI neurons a day; a busy test session can use them up, and then every chat reply fails with error 4006 until 00:00 UTC.
 - **Dev costs.** The AI binding uses `"remote": true`, so `npm run dev` calls real Workers AI and uses account quota.
 
 ## Open questions
 
-- Which model to use by default. Llama 3.3 often fails to call tools; Mistral Small 3.1 or gpt-oss-120b work well (see Model above).
+- Which model to use by default: Llama 3.3 with the schema fix, or Mistral Small 3.1 / gpt-oss-120b (see Model above). Recheck Llama when the daily allowance resets.
 
 - Should the profile panel let the user pick an older upload? Today it and `getProfile` use the latest one.
