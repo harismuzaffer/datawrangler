@@ -4,12 +4,11 @@
 
 - Architecture, pipeline model, transform list, and LLM tool design agreed. See [decisions.md](decisions.md).
 - Vitest set up (`npm test`).
-- Fixed streamed tool calls failing on Llama and other Workers AI models. See [decisions.md](decisions.md#model-and-streaming-workaround).
+- Fixed streamed tool calls failing on Llama and other Workers AI models (checked by hand in `npm run dev`). See [decisions.md](decisions.md#model-and-streaming-workaround).
 
 ## Next
 
-- User tests the stream fix in `npm run dev`.
-- Then: the first build goal from the user.
+- Waiting for the first build goal from the user.
 
 ## Not started
 

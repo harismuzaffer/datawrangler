@@ -33,3 +33,7 @@ looks good enough. lets record this. before i set a goal, lets fix one issue in 
 ## 2026-10-15 19:53 IST
 
 lets do this: "Wrap the AI binding to strip the duplicate field from each chunk". We will use this workaround until cloudflare fixes the provider. Can you also make sure that replace llama with any other model doesnt break the llm call. In other words, our workaround should fix the llama issue but also allow swapping the llama with any other model. Once done, i will test it once before moving to the actual goal
+
+## 2026-10-15 20:03 IST
+
+it works. ready for the goal?
