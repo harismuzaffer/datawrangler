@@ -29,3 +29,7 @@ one thing before you start: how many llm tools would there be total? do we call 
 ## 2026-10-15 19:44 IST
 
 looks good enough. lets record this. before i set a goal, lets fix one issue in this starter template project. I tried to use model "llama-3.3-70b-instruct-fp8-fast" in place of the given model "moonshotai/kimi-k2.7-code" in the code, there is some issue that prevents llm to respond to my queries regarding weather. Can you check what is it. Is this model specific or something else? I could not test against the default model given in the code because that needs me to upgrade to paid plan
+
+## 2026-10-15 19:53 IST
+
+lets do this: "Wrap the AI binding to strip the duplicate field from each chunk". We will use this workaround until cloudflare fixes the provider. Can you also make sure that replace llama with any other model doesnt break the llm call. In other words, our workaround should fix the llama issue but also allow swapping the llama with any other model. Once done, i will test it once before moving to the actual goal

@@ -35,11 +35,13 @@ How the code is organized and how to write it. Read this before changing code. U
 One line per file or module. Keep this list current.
 
 - `src/server.ts`: Worker entry and `ChatAgent` (chat loop, LLM call, tools).
+- `src/ai-binding.ts`: wraps the Workers AI binding to fix duplicated fields in streamed responses (a provider bug).
 - `src/app.tsx`: chat UI.
+- `vitest.config.ts`: unit test config. Tests sit next to the code as `*.test.ts` and run in Node.
 - `wrangler.jsonc`: bindings and Worker config.
 
 ## Main flows
 
 A few steps per flow, once it exists.
 
-- **Chat message:** browser -> WebSocket -> `ChatAgent.onChatMessage` -> Workers AI (streamed) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.
+- **Chat message:** browser -> WebSocket -> `ChatAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.

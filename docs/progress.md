@@ -3,15 +3,17 @@
 ## Done
 
 - Architecture, pipeline model, transform list, and LLM tool design agreed. See [decisions.md](decisions.md).
+- Vitest set up (`npm test`).
+- Fixed streamed tool calls failing on Llama and other Workers AI models. See [decisions.md](decisions.md#model-and-streaming-workaround).
 
 ## Next
 
-- Waiting for the first build goal from the user.
+- User tests the stream fix in `npm run dev`.
+- Then: the first build goal from the user.
 
 ## Not started
 
 - Rename the starter agent class and project name.
-- Add Vitest and a `test` script.
 - Upload to R2 and dataset records.
 - Profile workflow.
 - Pipeline storage, editing tools, preview.
