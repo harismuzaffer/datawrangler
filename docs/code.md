@@ -37,6 +37,8 @@ One line per file or module. Keep this list current.
 - `src/server.ts`: Worker entry and `CobblerAgent` (chat loop, LLM call, tools).
 - `src/prompts.ts`: system prompt (and later the tool definitions).
 - `src/ai-binding.ts`: wraps the Workers AI binding to fix duplicated fields in streamed responses (a provider bug).
+- `src/csv.ts`: decodes file bytes (BOM, UTF-8, UTF-16, Windows-1252 fallback) and parses CSV with Papa Parse (delimiter detection, quoted fields).
+- `src/profile.ts`: builds a dataset profile from parsed rows: column types, counts, samples, and detected issues.
 - `src/app.tsx`: chat UI.
 - `vitest.config.ts`: unit test config. Tests sit next to the code as `*.test.ts` and run in Node.
 - `wrangler.jsonc`: bindings and Worker config.

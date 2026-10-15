@@ -46,3 +46,9 @@ it works. ready for the goal?
 - remove the demo tools
 - write a DataCobbler system prompt
 - update the README - it should now reflect DataCobbler not the cloudflare starter template
+
+## 2026-10-15 20:15 IST
+
+/goal lets move to next goal:
+
+Upload and profile implementations. Upload a CSV of up to 5 MB to R2, parse it, and show a profile with columns, types, and detected issues. This needs a CSV parser and tests.

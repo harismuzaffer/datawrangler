@@ -68,6 +68,15 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **Stream fix (`src/ai-binding.ts`).** `workers-ai-provider` (3.3.1, and still in 4.0.0) duplicates text and tool-call arguments when streaming from models that send each chunk in both OpenAI and native Workers AI formats (Llama, Qwen, Mistral). Tool calls then fail to parse, and the model never answers. We wrap the AI binding and drop the native copies when the OpenAI-style delta is present. Other chunks pass through unchanged, so any model can be used. Tested by hand with Llama 3.3, Llama 4 Scout, Qwen3, Mistral Small 3.1, gpt-oss-120b, and GLM-4.7-flash.
 - **Remove the fix** when the provider reads only one format. To check: remove the wrapper and ask the agent for the weather with a Llama model.
 
+## CSV parsing and profile
+
+- **Parser:** Papa Parse. It is widely used, pure JavaScript, and handles delimiter detection, quoted fields, and quoted newlines. We decode bytes ourselves first, so encoding handling is the same in the Worker and in tests.
+- **Encoding:** BOM first (UTF-8, UTF-16), then strict UTF-8, then Windows-1252. Windows-1252 is the usual encoding of CSVs from older Excel. Both a BOM and a fallback are reported as issues.
+- **Header:** row 1 is the header. Row numbers in issues count the header as row 1, like a spreadsheet.
+- **Types:** `integer`, `decimal`, `boolean`, `date`, `text`, `empty`. The most common kind of value wins. Empty cells and placeholders such as `N/A` are left out. Stray values are flagged only in non-text columns, because numbers in a name or code column are normal.
+- **Issues** are detected by code, never by the LLM. Each has a plain message, a count, up to five row numbers, and up to three examples. Every issue maps to a planned transform. File level: BOM, encoding, quote errors, empty or duplicate column names, ragged rows, empty rows, duplicate rows. Column level: empty column, spaces at the ends, repeated spaces, invisible characters, missing-data placeholders, stray values, formatted numbers, mixed date formats, ambiguous day/month dates, mixed yes/no spellings, mixed letter case.
+- **Profile size** is kept small for the workflow (1 MiB step limit) and SQLite (2 MB row limit): values are cut to 60 characters, there are at most 5 samples and 5 sample rows, distinct counts stop at 10,000, and files are limited to 500 columns. A 500-column profile measured 397 KiB.
+
 ## Risks and limitations
 
 - **Prompt injection through CSV cells.** The LLM sees only the profile and samples, marked as data. Its output is limited to validated steps from a closed list.
@@ -75,6 +84,7 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **CSV edge cases:** BOM, non-UTF-8 encodings, `;` delimiters, quoted newlines, ragged rows. Use a proven parser.
 - **Workflow steps can retry.** Each step writes to a fixed R2 key. The agent ignores duplicate reports from the same run and step.
 - **No auth.** The user is a random ID kept in the browser. If the browser data is cleared, the user loses access to their data. Pipeline export reduces the impact. Old uploads need an R2 lifecycle rule.
+- **CPU time on the free plan.** Parsing and profiling cost about 1 s of CPU for a 5 MB file (measured in Node: 1.3 s for 7 MB, 90,000 rows). Workers Free allows 10 ms of CPU per request and per workflow step, so large files will fail when deployed on the free plan. `npm run dev` does not enforce the limit. Workers Paid allows 30 s by default. Options if this matters: the paid plan, or a much smaller upload limit on free.
 - **Dev costs.** The AI binding uses `"remote": true`, so `npm run dev` calls real Workers AI and uses account quota.
 
 ## Open questions
