@@ -37,3 +37,12 @@ lets do this: "Wrap the AI binding to strip the duplicate field from each chunk"
 ## 2026-10-15 20:03 IST
 
 it works. ready for the goal?
+
+## 2026-10-15 20:07 IST
+
+/goal lets start goal 1. This will be a very small goal:
+
+- turn the starter into DataCobbler: rename the ChatAgent class, project name(if not already done)
+- remove the demo tools
+- write a DataCobbler system prompt
+- update the README - it should now reflect DataCobbler not the cloudflare starter template

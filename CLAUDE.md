@@ -1,4 +1,4 @@
-# Datawrangler
+# DataCobbler
 
 Chat agent that cleans and reshapes messy CSV data. Built on Cloudflare: Agents SDK (`AIChatAgent`), Workers AI, Workflows, Durable Objects. TypeScript. Started from `cloudflare/agents-starter`.
 

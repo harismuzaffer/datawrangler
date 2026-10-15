@@ -1,4 +1,4 @@
-# Datawrangler — Code
+# DataCobbler — Code
 
 How the code is organized and how to write it. Read this before changing code. Update it in the same step as the code.
 
@@ -34,7 +34,8 @@ How the code is organized and how to write it. Read this before changing code. U
 
 One line per file or module. Keep this list current.
 
-- `src/server.ts`: Worker entry and `ChatAgent` (chat loop, LLM call, tools).
+- `src/server.ts`: Worker entry and `CobblerAgent` (chat loop, LLM call, tools).
+- `src/prompts.ts`: system prompt (and later the tool definitions).
 - `src/ai-binding.ts`: wraps the Workers AI binding to fix duplicated fields in streamed responses (a provider bug).
 - `src/app.tsx`: chat UI.
 - `vitest.config.ts`: unit test config. Tests sit next to the code as `*.test.ts` and run in Node.
@@ -44,4 +45,4 @@ One line per file or module. Keep this list current.
 
 A few steps per flow, once it exists.
 
-- **Chat message:** browser -> WebSocket -> `ChatAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.
+- **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.

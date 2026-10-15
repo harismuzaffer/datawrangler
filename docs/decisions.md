@@ -57,6 +57,11 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - The server validates `params` with the zod schema for that `op`. On failure, it returns the exact error so the LLM can retry.
 - Export, import, and download are UI buttons only.
 
+## Naming
+
+- The agent class is `CobblerAgent` and the Worker is `datacobbler`. The starter's `ChatAgent` was renamed with a `renamed_classes` migration, so any stored data moves with it. Wrangler now also offers an `exports` field that replaces `migrations`; the two cannot be mixed, so we keep `migrations` for now.
+- Do not rename or remove the Durable Object class again without a migration: its stored data would be lost.
+
 ## Model and streaming workaround
 
 - **Model:** `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Reason: it works on the free plan. The starter's Kimi model needs a paid plan.
@@ -70,10 +75,12 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **CSV edge cases:** BOM, non-UTF-8 encodings, `;` delimiters, quoted newlines, ragged rows. Use a proven parser.
 - **Workflow steps can retry.** Each step writes to a fixed R2 key. The agent ignores duplicate reports from the same run and step.
 - **No auth.** The user is a random ID kept in the browser. If the browser data is cleared, the user loses access to their data. Pipeline export reduces the impact. Old uploads need an R2 lifecycle rule.
-- **Durable Object class rename.** Rename the starter `ChatAgent` before any real data exists. A later rename loses stored data.
 - **Dev costs.** The AI binding uses `"remote": true`, so `npm run dev` calls real Workers AI and uses account quota.
 
 ## Open questions
+
+- The UI still connects every browser to the same agent instance (the default name). Per-user agent IDs come with the first stateful goal.
+- The starter's image attachment button is still there, but the Llama model is text-only. Replace it with CSV upload.
 
 - Exact platform limits (workflow step output, SQLite row size, WebSocket message size). Check the current docs before building upload and workflow code.
 - The current API of the Agents SDK workflow integration.

@@ -1,8 +1,8 @@
 {
-  "name": "agent-starter",
+  "name": "datacobbler",
   "version": "1.0.0",
   "private": true,
-  "description": "Starter template for building AI chat agents on Cloudflare",
+  "description": "Chat agent that cleans and reshapes messy CSV files, built on Cloudflare",
   "keywords": [
     "agents",
     "ai",
