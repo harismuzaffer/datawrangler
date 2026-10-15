@@ -12,6 +12,7 @@ How the code is organized and how to write it. Read this before changing code. U
 - Validate external input (tool arguments, uploads, requests) with zod at the boundary. Trust typed data inside.
 - Use async/await. Handle an error where you can act on it; never swallow it silently.
 - Use named exports. One main concern per file. Match the starter's file naming.
+- Write invisible or special characters as brace escapes (`\u{200B}`, with the `u` flag in regexes). The formatter turns `\u200B`-style escapes into the literal, invisible character.
 - Use the project's formatter and linter. Lines up to 120 characters. Do not reformat unrelated code.
 - User-facing text, including agent replies: short, plain, and human. No jargon.
 
