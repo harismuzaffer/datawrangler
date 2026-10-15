@@ -1,10 +1,5 @@
 import Papa from "papaparse";
-
-/** Largest CSV a user can upload, in bytes. */
-export const MAX_CSV_BYTES = 5 * 1024 * 1024;
-
-/** Most columns we profile. Wider files are rejected so the profile stays small. */
-export const MAX_COLUMNS = 500;
+import { MAX_COLUMNS } from "./limits";
 
 export type Encoding = "utf-8" | "utf-16le" | "utf-16be" | "windows-1252";
 

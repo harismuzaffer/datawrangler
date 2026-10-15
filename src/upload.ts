@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MAX_CSV_BYTES } from "./csv";
+import { MAX_CSV_BYTES } from "./limits";
 
 /** Thrown when an upload is refused. The message is safe to show to the user; `status` is the HTTP status to return. */
 export class UploadError extends Error {

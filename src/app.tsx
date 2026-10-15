@@ -2,7 +2,9 @@ import { Suspense, useCallback, useState, useEffect, useRef } from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { getToolName, isToolUIPart, type UIMessage } from "ai";
-import type { CobblerAgent } from "./server";
+import { MAX_CSV_BYTES } from "./limits";
+import { ProfilePanel } from "./profile-panel";
+import type { AgentState, CobblerAgent } from "./server";
 import {
   Badge,
   Button,
@@ -29,36 +31,29 @@ import {
   BrainIcon,
   CaretDownIcon,
   BugIcon,
-  XIcon,
   PaperclipIcon,
-  ImageIcon
+  FileCsvIcon
 } from "@phosphor-icons/react";
 
-// ── Attachment helpers ────────────────────────────────────────────────
+// ── User identity ─────────────────────────────────────────────────────
 
-interface Attachment {
-  id: string;
-  file: File;
-  preview: string;
-  mediaType: string;
-}
+const USER_ID_KEY = "datacobbler-user-id";
 
-function createAttachment(file: File): Attachment {
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    file,
-    preview: URL.createObjectURL(file),
-    mediaType: file.type || "application/octet-stream"
-  };
-}
-
-function fileToDataUri(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+/**
+ * Returns this browser's user ID, creating it on first visit.
+ * There is no login yet, so the ID in browser storage is what keeps a user's chats and files together.
+ */
+function getUserId(): string {
+  try {
+    const saved = localStorage.getItem(USER_ID_KEY);
+    if (saved) return saved;
+    const id = crypto.randomUUID();
+    localStorage.setItem(USER_ID_KEY, id);
+    return id;
+  } catch {
+    // Storage blocked (private mode): the user still works, but only for this page load.
+    return crypto.randomUUID();
+  }
 }
 
 // ── Small components ──────────────────────────────────────────────────
@@ -257,13 +252,16 @@ function Chat() {
   const [connected, setConnected] = useState(false);
   const [input, setInput] = useState("");
   const [showDebug, setShowDebug] = useState(false);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [userId] = useState(getUserId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const agent = useAgent<CobblerAgent>({
+  const agent = useAgent<CobblerAgent, AgentState>({
     agent: "CobblerAgent",
+    name: userId,
     onOpen: useCallback(() => setConnected(true), []),
     onClose: useCallback(() => setConnected(false), []),
     onError: useCallback(
@@ -285,6 +283,15 @@ function Chat() {
   });
 
   const isStreaming = status === "streaming" || status === "submitted";
+  const latestDataset = agent.state?.datasets[0];
+
+  // The agent object changes on every render; keep the profile loader stable so it is not refetched each time.
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
+  const loadProfile = useCallback(
+    (datasetId: string) => agentRef.current.stub.getProfile(datasetId),
+    []
+  );
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -297,19 +304,35 @@ function Chat() {
     }
   }, [isStreaming]);
 
-  const addFiles = useCallback((files: FileList | File[]) => {
-    const images = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    if (images.length === 0) return;
-    setAttachments((prev) => [...prev, ...images.map(createAttachment)]);
-  }, []);
-
-  const removeAttachment = useCallback((id: string) => {
-    setAttachments((prev) => {
-      const att = prev.find((a) => a.id === id);
-      if (att) URL.revokeObjectURL(att.preview);
-      return prev.filter((a) => a.id !== id);
-    });
-  }, []);
+  const uploadFile = useCallback(
+    async (file: File) => {
+      setUploadError(null);
+      if (file.size > MAX_CSV_BYTES) {
+        setUploadError(
+          `${file.name} is larger than ${MAX_CSV_BYTES / 1024 / 1024} MB.`
+        );
+        return;
+      }
+      setUploading(true);
+      try {
+        const response = await fetch(
+          `/agents/cobbler-agent/${encodeURIComponent(userId)}/upload?name=${encodeURIComponent(file.name)}`,
+          { method: "POST", body: file }
+        );
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          setUploadError(body?.error ?? "Upload failed. Please try again.");
+        }
+      } catch {
+        setUploadError("Upload failed. Check your connection and try again.");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [userId]
+  );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -328,52 +351,19 @@ function Chat() {
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(false);
-      if (e.dataTransfer.files.length > 0) addFiles(e.dataTransfer.files);
+      const file = e.dataTransfer.files[0];
+      if (file) uploadFile(file);
     },
-    [addFiles]
+    [uploadFile]
   );
 
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      const files: File[] = [];
-      for (const item of items) {
-        if (item.kind === "file") {
-          const file = item.getAsFile();
-          if (file) files.push(file);
-        }
-      }
-      if (files.length > 0) {
-        e.preventDefault();
-        addFiles(files);
-      }
-    },
-    [addFiles]
-  );
-
-  const send = useCallback(async () => {
+  const send = useCallback(() => {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || isStreaming) return;
+    if (!text || isStreaming) return;
     setInput("");
-
-    const parts: Array<
-      | { type: "text"; text: string }
-      | { type: "file"; mediaType: string; url: string }
-    > = [];
-    if (text) parts.push({ type: "text", text });
-
-    for (const att of attachments) {
-      const dataUri = await fileToDataUri(att.file);
-      parts.push({ type: "file", mediaType: att.mediaType, url: dataUri });
-    }
-
-    for (const att of attachments) URL.revokeObjectURL(att.preview);
-    setAttachments([]);
-
-    sendMessage({ role: "user", parts });
+    sendMessage({ role: "user", parts: [{ type: "text", text }] });
     if (textareaRef.current) textareaRef.current.style.height = "auto";
-  }, [input, attachments, isStreaming, sendMessage]);
+  }, [input, isStreaming, sendMessage]);
 
   return (
     <div
@@ -385,9 +375,9 @@ function Chat() {
       {isDragging && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-kumo-elevated/80 backdrop-blur-sm border-2 border-dashed border-kumo-brand rounded-xl m-2 pointer-events-none">
           <div className="flex flex-col items-center gap-2 text-kumo-brand">
-            <ImageIcon size={40} />
+            <FileCsvIcon size={40} />
             <Text variant="heading3" as="span">
-              Drop images here
+              Drop a CSV file here
             </Text>
           </div>
         </div>
@@ -437,20 +427,34 @@ function Chat() {
         </div>
       </header>
 
+      {latestDataset && (
+        <div className="px-5 pt-4">
+          <div className="max-w-3xl mx-auto">
+            <ProfilePanel dataset={latestDataset} loadProfile={loadProfile} />
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-5 py-6 space-y-5">
           {messages.length === 0 && (
             <Empty
               icon={<ChatCircleDotsIcon size={32} />}
-              title="Start a conversation"
+              title={
+                latestDataset
+                  ? "Ask about your file"
+                  : "Upload a CSV with the paperclip, or drop it here"
+              }
               contents={
                 <div className="flex flex-wrap justify-center gap-2">
-                  {[
-                    "What can you do?",
-                    "How would you clean a messy CSV?",
-                    "What is a pipeline?"
-                  ].map((prompt) => (
+                  {(latestDataset?.status === "ready"
+                    ? [
+                        "What's wrong with my file?",
+                        "Which problems should I fix first?"
+                      ]
+                    : ["What can you do?", "How would you clean a messy CSV?"]
+                  ).map((prompt) => (
                     <Button
                       key={prompt}
                       variant="outline"
@@ -531,24 +535,6 @@ function Chat() {
                     );
                   }
 
-                  if (
-                    part.type === "file" &&
-                    part.mediaType.startsWith("image/")
-                  ) {
-                    return (
-                      <div
-                        key={key}
-                        className={`flex ${isUser ? "justify-end" : "justify-start"}`}
-                      >
-                        <img
-                          src={part.url}
-                          alt="Attachment"
-                          className="max-h-64 rounded-xl border border-kumo-line object-contain"
-                        />
-                      </div>
-                    );
-                  }
-
                   if (part.type === "text") {
                     if (!part.text) return null;
 
@@ -600,39 +586,22 @@ function Chat() {
           <input
             ref={fileInputRef}
             type="file"
-            multiple
-            accept="image/*"
-            aria-label="Upload image attachments"
+            accept=".csv,.tsv,.txt,text/csv"
+            aria-label="Upload a CSV file"
             className="hidden"
             onChange={(e) => {
-              if (e.target.files) addFiles(e.target.files);
+              const file = e.target.files?.[0];
+              if (file) uploadFile(file);
               e.target.value = "";
             }}
           />
 
-          {attachments.length > 0 && (
-            <div className="flex gap-2 mb-2 flex-wrap">
-              {attachments.map((att) => (
-                <div
-                  key={att.id}
-                  className="relative group rounded-lg border border-kumo-line bg-kumo-control overflow-hidden"
-                >
-                  <img
-                    src={att.preview}
-                    alt={att.file.name}
-                    className="h-16 w-16 object-cover"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(att.id)}
-                    className="absolute top-0.5 right-0.5 rounded-full bg-kumo-contrast/80 text-kumo-inverse p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                    aria-label={`Remove ${att.file.name}`}
-                  >
-                    <XIcon size={10} />
-                  </button>
-                </div>
-              ))}
-            </div>
+          {(uploading || uploadError) && (
+            <output className="block mb-2">
+              <Text size="xs" variant={uploadError ? "error" : "secondary"}>
+                {uploadError ?? "Uploading…"}
+              </Text>
+            </output>
           )}
 
           <div className="flex items-end gap-3 rounded-xl border border-kumo-line bg-kumo-base p-3 shadow-sm focus-within:ring-2 focus-within:ring-kumo-ring focus-within:border-transparent transition-shadow">
@@ -640,10 +609,10 @@ function Chat() {
               type="button"
               variant="ghost"
               shape="square"
-              aria-label="Attach images"
+              aria-label="Upload a CSV file"
               icon={<PaperclipIcon size={18} />}
               onClick={() => fileInputRef.current?.click()}
-              disabled={!connected || isStreaming}
+              disabled={!connected || uploading}
               className="mb-0.5"
             />
             <InputArea
@@ -661,12 +630,7 @@ function Chat() {
                 el.style.height = "auto";
                 el.style.height = `${el.scrollHeight}px`;
               }}
-              onPaste={handlePaste}
-              placeholder={
-                attachments.length > 0
-                  ? "Add a message or send images..."
-                  : "Send a message..."
-              }
+              placeholder="Ask about your data..."
               disabled={!connected || isStreaming}
               rows={1}
               className="flex-1 ring-0! focus:ring-0! shadow-none! bg-transparent! outline-none! resize-none max-h-40"
@@ -687,9 +651,7 @@ function Chat() {
                 variant="primary"
                 shape="square"
                 aria-label="Send message"
-                disabled={
-                  (!input.trim() && attachments.length === 0) || !connected
-                }
+                disabled={!input.trim() || !connected}
                 icon={<PaperPlaneRightIcon size={18} />}
                 className="mb-0.5"
               />

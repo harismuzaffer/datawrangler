@@ -79,6 +79,8 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 
 ## Upload and profile flow
 
+- **Agent state is read-only for browsers.** It mirrors the `datasets` table, so `validateStateChange` refuses any update that does not come from the agent.
+
 - **Upload goes through the agent** (`POST /agents/cobbler-agent/{userId}/upload`). The agent already knows the user, so it can store the file and record the dataset in one place. The body is read with a hard 5 MB cap, whatever Content-Length says. Files with zero bytes near the start (Excel, images) are refused before storing.
 - **R2 key:** `{userId}/{datasetId}/v0.csv`. The user ID must be letters, digits, and dashes, so it cannot change the path. The file name is only shown, never used in a key.
 - **Workflow instance ID = dataset ID.** Callbacks find the dataset directly, and a callback cannot arrive before the ID is stored.
@@ -93,14 +95,10 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **Tool calling on Workers AI models can be unreliable.** Detection is done by code, schemas are kept small, and validation errors are sent back for a retry.
 - **CSV edge cases:** BOM, non-UTF-8 encodings, `;` delimiters, quoted newlines, ragged rows. Use a proven parser.
 - **Workflow steps can retry.** Each step writes to a fixed R2 key. The agent ignores duplicate reports from the same run and step.
-- **No auth.** The user is a random ID kept in the browser. If the browser data is cleared, the user loses access to their data. Pipeline export reduces the impact. Old uploads need an R2 lifecycle rule.
+- **No auth.** The user is a random UUID kept in browser storage (`datacobbler-user-id`); it names the user's agent. Anyone who knows the ID can open that agent, including its `get-messages` endpoint. If the browser data is cleared, the user loses access to their data. Pipeline export reduces the impact. Old uploads need an R2 lifecycle rule.
 - **CPU time on the free plan.** Parsing and profiling cost about 1 s of CPU for a 5 MB file (measured in Node: 1.3 s for 7 MB, 90,000 rows). Workers Free allows 10 ms of CPU per request and per workflow step, so large files will fail when deployed on the free plan. `npm run dev` does not enforce the limit. Workers Paid allows 30 s by default. Options if this matters: the paid plan, or a much smaller upload limit on free.
 - **Dev costs.** The AI binding uses `"remote": true`, so `npm run dev` calls real Workers AI and uses account quota.
 
 ## Open questions
 
-- The UI still connects every browser to the same agent instance (the default name). Per-user agent IDs come with the first stateful goal.
-- The starter's image attachment button is still there, but the Llama model is text-only. Replace it with CSV upload.
-
-- Exact platform limits (workflow step output, SQLite row size, WebSocket message size). Check the current docs before building upload and workflow code.
-- The current API of the Agents SDK workflow integration.
+- Should the profile panel let the user pick an older upload? Today it and `getProfile` use the latest one.

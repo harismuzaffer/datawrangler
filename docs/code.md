@@ -42,7 +42,9 @@ One line per file or module. Keep this list current.
 - `src/ai-binding.ts`: wraps the Workers AI binding to fix duplicated fields in streamed responses (a provider bug).
 - `src/csv.ts`: decodes file bytes (BOM, UTF-8, UTF-16, Windows-1252 fallback) and parses CSV with Papa Parse (delimiter detection, quoted fields).
 - `src/profile.ts`: builds a dataset profile from parsed rows: column types, counts, samples, and detected issues.
-- `src/app.tsx`: chat UI.
+- `src/app.tsx`: chat UI: per-browser user ID, CSV upload (button and drag and drop), profile panel, messages.
+- `src/profile-panel.tsx`: shows the latest upload's status, file issues, and a table of columns with types, counts, and issues.
+- `src/limits.ts`: upload size and column limits, shared by the Worker and the browser (kept apart so the browser does not bundle the parser).
 - `vitest.config.ts`: unit test config. Tests sit next to the code as `*.test.ts` and run in Node.
 - `wrangler.jsonc`: bindings and Worker config.
 
@@ -50,5 +52,5 @@ One line per file or module. Keep this list current.
 
 A few steps per flow, once it exists.
 
-- **Upload and profile:** browser `POST /agents/cobbler-agent/{userId}/upload?name=…` -> `CobblerAgent.onRequest` checks size and type -> R2 `{userId}/{datasetId}/v0.csv` -> `datasets` row with status `profiling` -> `ProfileWorkflow` (instance ID = dataset ID) -> `onWorkflowComplete` stores the profile, or `onWorkflowError` stores the error -> state sync tells the browser.
+- **Upload and profile:** browser (user ID from local storage) `POST /agents/cobbler-agent/{userId}/upload?name=…` -> `CobblerAgent.onRequest` checks size and type -> R2 `{userId}/{datasetId}/v0.csv` -> `datasets` row with status `profiling` -> `ProfileWorkflow` (instance ID = dataset ID) -> `onWorkflowComplete` stores the profile, or `onWorkflowError` stores the error -> state sync tells the browser -> the panel fetches the full profile with the `getProfile` callable.
 - **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed (`getProfile` reads the latest profile from SQLite) -> reply streamed back. Messages persist in the agent's SQLite storage.

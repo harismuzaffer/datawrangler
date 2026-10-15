@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CsvError, decodeCsvBytes, MAX_COLUMNS, parseCsv } from "./csv";
+import { CsvError, decodeCsvBytes, parseCsv } from "./csv";
+import { MAX_COLUMNS } from "./limits";
 
 const bytes = (...values: number[]) => new Uint8Array(values);
 const utf8 = (text: string) => new TextEncoder().encode(text);

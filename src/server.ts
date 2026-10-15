@@ -1,5 +1,5 @@
 import { createWorkersAI } from "workers-ai-provider";
-import { callable, routeAgentRequest } from "agents";
+import { callable, routeAgentRequest, type Connection } from "agents";
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
 import {
   convertToModelMessages,
@@ -66,6 +66,11 @@ export class CobblerAgent extends AIChatAgent<Env, AgentState> {
   initialState: AgentState = { datasets: [] };
   maxPersistedMessages = 100;
   chatRecovery = true;
+
+  // State mirrors the datasets table, so only the agent may change it, never a browser.
+  validateStateChange(_nextState: AgentState, source: Connection | "server") {
+    if (source !== "server") throw new Error("State is read-only for clients.");
+  }
 
   async onStart() {
     this.sql`create table if not exists datasets (
