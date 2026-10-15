@@ -21,10 +21,13 @@ export function columnNames(header: string[], width = header.length): string[] {
   return names;
 }
 
-/** Builds a table from parsed records (header first). Short rows are padded so every row has every column. */
-export function tableFromRecords(records: string[][]): Table {
+/**
+ * Builds a table from parsed records (header first). Short rows are padded so every row has every column.
+ * `minWidth` keeps the columns of the whole file when the records are only a sample of it.
+ */
+export function tableFromRecords(records: string[][], minWidth = 0): Table {
   const [header = [], ...data] = records;
-  let width = header.length;
+  let width = Math.max(header.length, minWidth);
   for (const row of data) width = Math.max(width, row.length);
   const rows = data.map((row) =>
     row.length === width

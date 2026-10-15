@@ -35,8 +35,9 @@ How the code is organized and how to write it. Read this before changing code. U
 
 One line per file or module. Keep this list current.
 
-- `src/server.ts`: Worker entry and `CobblerAgent`: chat loop, LLM call and tools, upload route, `datasets` table, synced state, workflow callbacks.
-- `src/prompts.ts`: system prompt.
+- `src/server.ts`: Worker entry and `CobblerAgent`: chat loop and LLM call, upload route, `datasets` and `pipelines` tables, preview sample loading, synced state, workflow callbacks.
+- `src/prompts.ts`: system prompt (with the transform catalog) and the tool descriptions and input schemas.
+- `src/tools.ts`: the LLM tools. They reach the agent through the `ToolHost` interface.
 - `src/upload.ts`: upload checks: body size limit while reading, binary-file check, file name and user ID schemas.
 - `src/profile-workflow.ts`: `ProfileWorkflow`: reads a CSV from R2, profiles it, reports the profile to the agent.
 - `src/profile-summary.ts`: shrinks a profile to fit the LLM's context.
@@ -57,4 +58,6 @@ One line per file or module. Keep this list current.
 A few steps per flow, once it exists.
 
 - **Upload and profile:** browser (user ID from local storage) `POST /agents/cobbler-agent/{userId}/upload?name=…` -> `CobblerAgent.onRequest` checks size and type -> R2 `{userId}/{datasetId}/v0.csv` -> `datasets` row with status `profiling` -> `ProfileWorkflow` (instance ID = dataset ID) -> `onWorkflowComplete` stores the profile, or `onWorkflowError` stores the error -> state sync tells the browser -> the panel fetches the full profile with the `getProfile` callable.
-- **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed (`getProfile` reads the latest profile from SQLite) -> reply streamed back. Messages persist in the agent's SQLite storage.
+- **Pipeline edit (tool call):** `addStep` / `updateStep` / `removeStep` / `moveStep` -> load the preview sample (cached, or first 512 KB from R2) -> apply the edit to the stored pipeline -> run all steps on the sample -> refuse if the edited step fails, else save to `pipelines` -> return each step's summary to the LLM.
+- **Profile ready:** `onWorkflowComplete` also creates the dataset's pipeline with the safe steps the profile calls for.
+- **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.

@@ -134,10 +134,15 @@ export function createContext(table: Table): StepContext {
 const columnName = z.string().trim().min(1).max(200);
 
 /** A list of column names, or "*" for every column. */
-export const columnsSpec = z.union([
-  z.literal("*"),
-  z.array(columnName).min(1).max(500)
-]);
+export const columnsSpec = z.union(
+  [
+    z.literal("*"),
+    z.array(columnName).min(1).max(500),
+    // Models often send one column as a plain string; treat it as a list of one.
+    columnName.transform((name) => [name])
+  ],
+  { error: 'columns must be "*" or a list of column names, like ["city"].' }
+);
 export type ColumnsSpec = z.infer<typeof columnsSpec>;
 export const column = columnName;
 export const newColumnName = columnName;

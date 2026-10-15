@@ -129,3 +129,38 @@ export function parseCsv(text: string): ParsedCsv {
     problems: [...problemRows].map(([code, list]) => ({ code, rows: list }))
   };
 }
+
+/** How many data rows a preview runs on. */
+export const SAMPLE_ROWS = 200;
+
+/** How many bytes to read from the start of a file for a preview sample. */
+export const SAMPLE_BYTES = 512 * 1024;
+
+/** Decodes bytes in an encoding found earlier by `decodeCsvBytes`, skipping a byte order mark if there is one. */
+function decodeKnown(bytes: Uint8Array, encoding: Encoding): string {
+  if (encoding === "windows-1252") return decodeWindows1252(bytes);
+  // Not strict: a sample can end in the middle of a character.
+  const text = new TextDecoder(encoding).decode(bytes);
+  return text.startsWith("\u{FEFF}") ? text.slice(1) : text;
+}
+
+/**
+ * Parses the header and up to SAMPLE_ROWS data rows from the start of a file.
+ * `truncated` says the bytes stop before the end of the file; then the last row read may be cut off, so it is dropped.
+ */
+export function parseSample(
+  bytes: Uint8Array,
+  options: { encoding: Encoding; delimiter: string; truncated: boolean }
+): string[][] {
+  const records = Papa.parse<string[]>(decodeKnown(bytes, options.encoding), {
+    delimiter: options.delimiter,
+    // One extra row, so dropping a cut-off last row still leaves a full sample.
+    preview: SAMPLE_ROWS + 2,
+    skipEmptyLines: false
+  }).data;
+  const last = records[records.length - 1];
+  if (options.truncated) records.pop();
+  else if (records.length > 1 && last.length === 1 && last[0] === "")
+    records.pop();
+  return records.slice(0, SAMPLE_ROWS + 1);
+}

@@ -51,11 +51,22 @@ Left out of v1: regex (a bad pattern can lock the CPU), formulas or computed col
 About 9 tools, grouped by action on the pipeline, not one per transform.
 Reason: every tool definition goes into each prompt, and open models choose tools worse when the list is long or the schemas are large.
 
-`getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `previewPipeline`, `runPipeline` (needs user confirmation), `loadPipeline`, `rememberPreference`.
+Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `previewPipeline`. Later: `runPipeline` (needs user confirmation), `loadPipeline`, `rememberPreference`.
 
-- `addStep` takes `{ op, params, position? }`. `op` is an enum of transform names. The system prompt holds a one-line catalog of the transforms.
-- The server validates `params` with the zod schema for that `op`. On failure, it returns the exact error so the LLM can retry.
+- `addStep` takes `{ op, params, position? }`. `op` is an enum of transform names. The system prompt holds a one-line catalog of the transforms, built from each transform's usage text.
+- The server validates `params` with the zod schema for that `op`. On failure, it returns the exact error and the usage line so the LLM can retry. Errors are returned as tool results, not thrown, so the model sees them.
+- **Every edit is tried on the sample before it is saved.** If the new or changed step fails there (for example, an unknown column), nothing is saved. A removal or move that makes another step fail is saved, with a warning.
+- **The tools work on the pipeline of the latest upload.** `getProfile` also returns its current steps.
+- **Lenient input where models often slip:** `columns` may be a single name instead of a list, and `position` may be a numeric string. `params` must be an object.
+- **Parallel tool calls are safe.** The model may call `addStep` several times at once. Each edit loads, changes, and saves the pipeline with no `await` in between, so edits cannot overwrite each other.
+- Prompts and tool specs live in `src/prompts.ts`; tool logic lives in `src/tools.ts` behind a small `ToolHost` interface, so it is tested without a Durable Object.
 - Export, import, and download are UI buttons only.
+
+## Preview sample
+
+- A preview runs on the header and the first 200 data rows. The agent reads only the first 512 KB of the file (an R2 range read), decodes it with the encoding found by the profile, and drops a row that may be cut off at the end.
+- The sample is cached in the agent's memory per dataset; uploaded files never change.
+- The sample table gets the column count of the whole file, so column names match the profile.
 
 ## Naming
 
@@ -66,6 +77,7 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 
 - **Model:** `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Reason: it works on the free plan. The starter's Kimi model needs a paid plan.
 - **Stream fix (`src/ai-binding.ts`).** `workers-ai-provider` (3.3.1, and still in 4.0.0) duplicates text and tool-call arguments when streaming from models that send each chunk in both OpenAI and native Workers AI formats (Llama, Qwen, Mistral). Tool calls then fail to parse, and the model never answers. We wrap the AI binding and drop the native copies when the OpenAI-style delta is present. Other chunks pass through unchanged, so any model can be used. Tested by hand with Llama 3.3, Llama 4 Scout, Qwen3, Mistral Small 3.1, gpt-oss-120b, and GLM-4.7-flash.
+- **Tool calling differs a lot by model** (tested on 2026-10-15 with the same prompt, tools, and messy file: "make city title case, normalize amount, remove duplicates, then preview"). Llama 3.3 70B wrote its tool calls as plain text, so nothing ran. Mistral Small 3.1 (14 s), gpt-oss-120b (24 s), and GLM-4.7-flash (39 s) did every step right. Qwen3 30B did too, but showed its `<think>` text in the reply. Llama 4 Scout added steps twice and sent invalid input.
 - **Remove the fix** when the provider reads only one format. To check: remove the wrapper and ask the agent for the weather with a Llama model.
 
 ## CSV parsing and profile
@@ -118,5 +130,7 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **Dev costs.** The AI binding uses `"remote": true`, so `npm run dev` calls real Workers AI and uses account quota.
 
 ## Open questions
+
+- Which model to use by default. Llama 3.3 often fails to call tools; Mistral Small 3.1 or gpt-oss-120b work well (see Model above).
 
 - Should the profile panel let the user pick an older upload? Today it and `getProfile` use the latest one.

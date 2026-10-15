@@ -473,3 +473,17 @@ describe("tableFromRecords", () => {
     });
   });
 });
+
+describe("columns parameter", () => {
+  it("accepts a single column name as a list of one", () => {
+    expect(run("trim", { columns: "name" }, people()).result.cellsChanged).toBe(
+      1
+    );
+  });
+
+  it("explains the expected shape when it is wrong", () => {
+    expect(() => run("trim", { columns: 5 }, people())).toThrow(
+      /or a list of column names, like/
+    );
+  });
+});
