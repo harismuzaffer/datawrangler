@@ -52,3 +52,7 @@ it works. ready for the goal?
 /goal lets move to next goal:
 
 Upload and profile implementations. Upload a CSV of up to 5 MB to R2, parse it, and show a profile with columns, types, and detected issues. This needs a CSV parser and tests.
+
+## 2026-10-15 21:21 IST
+
+/goal lets move to a bigger goal - implement the pipeline core. Store pipelines in the agent, add the transforms, and add the addStep, updateStep, removeStep, moveStep, and previewPipeline tools.

@@ -1,4 +1,5 @@
 import type { Encoding, ParsedCsv } from "./csv";
+import { columnNames } from "./table";
 
 export type ColumnType =
   | "empty"
@@ -81,7 +82,8 @@ const MAX_CASE_GROUPS = 5_000;
 // Long values would make the profile large; the LLM and UI only need a glimpse.
 const MAX_VALUE_LENGTH = 60;
 
-const NULL_MARKERS = new Set([
+/** Cell values that usually stand for missing data, in lower case. */
+export const NULL_MARKERS = new Set([
   "n/a",
   "na",
   "#n/a",
@@ -523,7 +525,8 @@ export function profileCsv(
     });
   }
 
-  const names: string[] = [];
+  // Same names the pipeline uses, so the LLM refers to columns the way steps expect.
+  const names = columnNames(header, width);
   const emptyHeaders = tally();
   const duplicateHeaders = tally();
   const seenNames = new Set<string>();
@@ -533,7 +536,6 @@ export function profileCsv(
     const key = raw.toLowerCase();
     if (raw !== "" && seenNames.has(key)) duplicateHeaders.add(1, raw);
     seenNames.add(key);
-    names.push(raw === "" ? `Column ${c + 1}` : raw);
   }
   fileIssues.push(
     emptyHeaders.toIssue(

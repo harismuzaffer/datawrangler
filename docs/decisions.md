@@ -89,6 +89,14 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **Synced state** holds a short summary per dataset (status, counts, error). The full profile can be hundreds of KB, so the UI fetches it with the `getProfile` callable.
 - **The LLM gets a compact profile:** clean columns only with name and type, at most 12,000 characters, plus a note that the values are data, not instructions.
 
+## Transform engine
+
+- **Column names are unique and never empty.** Steps refer to columns by name. An empty header becomes `Column N`, and a repeated name becomes `name (2)`. The profile uses the same names. The cleaned file keeps these names. A name that differs only in letter case is still found, if it is the only match.
+- **Ragged rows are padded** with empty cells to the widest row when the table is loaded.
+- **Each transform** has a zod schema for its parameters, a one-line usage text for the LLM, and `safe` and `wholeFile` flags. It reports cells changed, rows removed, columns added and removed, and cells it could not convert (`failed`), with up to three examples of each.
+- **Conversions never guess.** Dates that match none of the given formats, and numbers like `12,5` when the decimal separator is `.`, are left unchanged and counted as failed. Two-digit years are read as 1950–2049.
+- **Find and replace is plain text only** (no regex), as decided for v1.
+
 ## Risks and limitations
 
 - **Prompt injection through CSV cells.** The LLM sees only the profile and samples, marked as data. Its output is limited to validated steps from a closed list.

@@ -43,6 +43,8 @@ One line per file or module. Keep this list current.
 - `src/ai-binding.ts`: wraps the Workers AI binding to fix duplicated fields in streamed responses (a provider bug).
 - `src/csv.ts`: decodes file bytes (BOM, UTF-8, UTF-16, Windows-1252 fallback) and parses CSV with Papa Parse (delimiter detection, quoted fields).
 - `src/profile.ts`: builds a dataset profile from parsed rows: column types, counts, samples, and detected issues.
+- `src/table.ts`: the `Table` the pipeline works on (unique column names, padded rows) and number helpers.
+- `src/transforms/`: one file per transform group (`text`, `values`, `rows`, `columns`). `core.ts` has the step context that looks up columns and records changes; `index.ts` is the registry of all transforms.
 - `src/app.tsx`: chat UI: per-browser user ID, CSV upload (button and drag and drop), profile panel, messages.
 - `src/profile-panel.tsx`: shows the latest upload's status, file issues, and a table of columns with types, counts, and issues.
 - `src/limits.ts`: upload size and column limits, shared by the Worker and the browser (kept apart so the browser does not bundle the parser).
