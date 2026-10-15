@@ -96,6 +96,8 @@ Reason: every tool definition goes into each prompt, and open models choose tool
 - **Each transform** has a zod schema for its parameters, a one-line usage text for the LLM, and `safe` and `wholeFile` flags. It reports cells changed, rows removed, columns added and removed, and cells it could not convert (`failed`), with up to three examples of each.
 - **Conversions never guess.** Dates that match none of the given formats, and numbers like `12,5` when the decimal separator is `.`, are left unchanged and counted as failed. Two-digit years are read as 1950–2049.
 - **Find and replace is plain text only** (no regex), as decided for v1.
+- **Math:** `math` covers add, subtract, multiply, and divide with a constant or another column; scaling and unit conversion use multiply. A cell that is not a plain number, or a division by zero, is counted as failed. In a new column it stays empty; when overwriting, the original value is kept so no data is lost. Rounding uses decimal exponents (1.005 → 1.01) and rounds halves away from zero.
+- **Window transforms** write their result in a new column and never move rows. Sorting for `orderBy` is stable; numbers compare as numbers, other values as text, and empty cells sort last. All window transforms and `dedupe` are `wholeFile`, so their preview is marked "sample only".
 
 ## Risks and limitations
 

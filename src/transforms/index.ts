@@ -1,8 +1,10 @@
 import { columnTransforms } from "./columns";
 import type { Transform } from "./core";
+import { mathTransforms } from "./math";
 import { rowTransforms } from "./rows";
 import { textTransforms } from "./text";
 import { valueTransforms } from "./values";
+import { windowTransforms } from "./window";
 
 export { createContext, StepError, type Change, type StepResult } from "./core";
 
@@ -11,7 +13,9 @@ export const TRANSFORMS = {
   ...textTransforms,
   ...valueTransforms,
   ...rowTransforms,
-  ...columnTransforms
+  ...columnTransforms,
+  ...mathTransforms,
+  ...windowTransforms
 } satisfies Record<string, Transform>;
 
 export type TransformName = keyof typeof TRANSFORMS;
