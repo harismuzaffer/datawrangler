@@ -660,7 +660,7 @@ export class CobblerAgent
     const workersai = createWorkersAI({ binding: withStreamFix(this.env.AI) });
 
     const result = streamText({
-      model: workersai("@cf/mistralai/mistral-small-3.1-24b-instruct", {
+      model: workersai("@cf/openai/gpt-oss-120b", {
         sessionAffinity: this.sessionAffinity
       }),
       system: systemPrompt(this.preferences()),
@@ -684,6 +684,9 @@ export class CobblerAgent
         reasoning: "before-last-message"
       }),
       tools: createTools(this),
+      // Workers AI stops at 256 output tokens by default. Reasoning models use most of that before a tool call,
+      // so the call's arguments were cut off and failed to parse.
+      maxOutputTokens: 4096,
       stopWhen: stepCountIs(20),
       abortSignal: options?.abortSignal
     });
