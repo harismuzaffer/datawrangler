@@ -226,6 +226,8 @@ export async function pipelineView(
     upToStepId: upToStepId ?? null,
     sampleRows: all.sampleRows,
     partial: all.partial,
+    /** Columns after the last step, for adding a step at the end. */
+    endColumns: all.columns,
     columns: upTo.columns,
     rowCount: upTo.rowCount,
     rows: upTo.rows

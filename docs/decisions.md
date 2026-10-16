@@ -72,6 +72,10 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **The view** describes every step on the sample, with the columns each step sees (for the forms' column pickers), and up to 20 result rows, optionally up to a chosen step.
 - **Forms are built from each transform's JSON Schema** (made from its zod schema), so a new transform needs no UI code. Fields named `column`, `columns`, `otherColumn`, and `groupBy` get column pickers.
 - **Running from the panel** asks the user to confirm first, like the chat's approval card.
+- **Callable arguments travel as JSON,** so a missing argument arrives as `null`, not `undefined`. Optional callable arguments accept `null`.
+- **The form checks required fields** before it sends, and names the missing ones in plain words. The agent's checks still decide; their messages are shown as they are.
+- **The panels above the chat take at most half the window** and scroll, so the chat always has room.
+- **Checked by hand** on 2026-10-16 in a headless browser, at 1300 and 800 pixels high: add (with column picker), edit, move, remove, an empty form, a refused step (a column name that exists), preview up to a step, run, download, and a chat edit showing up in the panel.
 
 ## Full runs and download
 

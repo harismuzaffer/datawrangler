@@ -4,7 +4,7 @@ A chat agent that cleans and reshapes messy CSV files. You upload a CSV and chat
 
 Built on Cloudflare: [Agents SDK](https://developers.cloudflare.com/agents/) (`AIChatAgent`), [Workers AI](https://developers.cloudflare.com/workers-ai/), [Workflows](https://developers.cloudflare.com/workflows/), Durable Objects, and R2.
 
-> **Status:** early. Upload a CSV, see its columns, types, and issues, and ask the agent to add, change, reorder, or preview cleaning steps. Ask for the cleaned file, approve the run in the chat, and download the result from the panel. A pipeline panel, pipeline export and import, and memory are not built yet. See [docs/progress.md](docs/progress.md).
+> **Status:** early. Upload a CSV, see its columns, types, and issues, and build a pipeline of cleaning steps in the chat or in the pipeline panel: add, edit, reorder, remove, and preview steps. Run it on the whole file (the chat asks for approval; the panel asks to confirm) and download the result. Pipeline export and import, and memory, are not built yet. See [docs/progress.md](docs/progress.md).
 
 ## Architecture
 

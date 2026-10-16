@@ -50,8 +50,10 @@ One line per file or module. Keep this list current.
 - `src/table.ts`: the `Table` the pipeline works on (unique column names, padded rows) and number helpers.
 - `src/transforms/`: one file per transform group (`text`, `values`, `rows`, `columns`, `math`, `window`). `core.ts` has the step context that looks up columns and records changes; `index.ts` is the registry of all transforms.
 - `src/pipeline.ts`: pipeline model: validate, add, update, remove, and move steps; run steps on a table; run the whole pipeline for a full run; build a preview; pick the safe steps for a profile.
-- `src/app.tsx`: chat UI: per-browser user ID, CSV upload (button and drag and drop), profile panel, messages, tool approval cards.
+- `src/app.tsx`: chat UI: per-browser user ID, CSV upload (button and drag and drop), profile and pipeline panels (capped at half the window), messages, tool approval cards.
 - `src/profile-panel.tsx`: shows the latest upload's status, file issues, a table of columns with types, counts, and issues, and its latest run with a download button.
+- `src/pipeline-panel.tsx`: the pipeline panel: steps with their results on the preview rows, move, remove, edit, add, preview up to a step, the result table, and Run with a confirm step.
+- `src/step-form.tsx`: the add and edit form for one step, built from the transform's JSON Schema, with column pickers.
 - `src/limits.ts`: upload size and column limits, shared by the Worker and the browser (kept apart so the browser does not bundle the parser).
 - `vitest.config.ts`: unit test config. Tests sit next to the code as `*.test.ts` and run in Node.
 - `wrangler.jsonc`: bindings and Worker config.

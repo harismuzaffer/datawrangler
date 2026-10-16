@@ -107,7 +107,8 @@ const runIdSchema = z.uuid();
 /** Arguments of the panel's callables. They come from the browser, so they are checked. */
 const panelInput = z.object({
   datasetId: z.uuid(),
-  upToStepId: z.string().max(20).optional()
+  // A missing argument arrives as null after the trip through JSON.
+  upToStepId: z.string().max(20).nullish()
 });
 
 function datasetInfo(row: DatasetRow): DatasetInfo {
@@ -496,7 +497,7 @@ export class CobblerAgent
     if (!input.success) return { error: "Invalid request." };
     const dataset = readyDataset(this.dataset(input.data.datasetId));
     if ("error" in dataset) return dataset;
-    return pipelineView(this, dataset, input.data.upToStepId);
+    return pipelineView(this, dataset, input.data.upToStepId ?? undefined);
   }
 
   /** Applies one step edit from the pipeline panel, with the same checks as the chat tools. */
@@ -511,7 +512,7 @@ export class CobblerAgent
     const result = await editPipeline(this, dataset, parsedEdit.data);
     if ("error" in result) return result;
     return {
-      saved: true,
+      saved: true as const,
       ...(result.warning ? { warning: result.warning } : {})
     };
   }

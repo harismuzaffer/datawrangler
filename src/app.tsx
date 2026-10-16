@@ -1,8 +1,16 @@
-import { Suspense, useCallback, useState, useEffect, useRef } from "react";
+import {
+  Suspense,
+  useCallback,
+  useMemo,
+  useState,
+  useEffect,
+  useRef
+} from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { getToolName, isToolUIPart, type UIMessage } from "ai";
 import { MAX_CSV_BYTES } from "./limits";
+import { PipelinePanel, type PipelineApi } from "./pipeline-panel";
 import { ProfilePanel } from "./profile-panel";
 import type { AgentState, CobblerAgent } from "./server";
 import {
@@ -293,11 +301,23 @@ function Chat() {
   const isStreaming = status === "streaming" || status === "submitted";
   const latestDataset = agent.state?.datasets[0];
 
-  // The agent object changes on every render; keep the profile loader stable so it is not refetched each time.
+  // The agent object changes on every render; keep the loaders stable so they are not refetched each time.
   const agentRef = useRef(agent);
   agentRef.current = agent;
   const loadProfile = useCallback(
     (datasetId: string) => agentRef.current.stub.getProfile(datasetId),
+    []
+  );
+  const pipelineApi = useMemo<PipelineApi>(
+    () => ({
+      getTransformCatalog: () => agentRef.current.stub.getTransformCatalog(),
+      getPipelineView: (datasetId, upToStepId) =>
+        agentRef.current.stub.getPipelineView(datasetId, upToStepId),
+      editPipelineStep: (datasetId, edit) =>
+        agentRef.current.stub.editPipelineStep(datasetId, edit),
+      runPipelineNow: (datasetId) =>
+        agentRef.current.stub.runPipelineNow(datasetId)
+    }),
     []
   );
 
@@ -436,8 +456,9 @@ function Chat() {
       </header>
 
       {latestDataset && (
-        <div className="px-5 pt-4">
-          <div className="max-w-3xl mx-auto">
+        // Capped, so the chat always keeps at least half the window.
+        <div className="px-5 pt-4 max-h-[50vh] overflow-y-auto shrink-0">
+          <div className="max-w-3xl mx-auto space-y-3 pb-1">
             <ProfilePanel
               dataset={latestDataset}
               loadProfile={loadProfile}
@@ -445,6 +466,9 @@ function Chat() {
                 `/agents/cobbler-agent/${encodeURIComponent(userId)}/download?run=${encodeURIComponent(runId)}`
               }
             />
+            {latestDataset.status === "ready" && (
+              <PipelinePanel dataset={latestDataset} api={pipelineApi} />
+            )}
           </div>
         </div>
       )}
