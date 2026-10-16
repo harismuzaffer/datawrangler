@@ -64,6 +64,15 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **A rejected run reaches the model as "Tool execution was denied."** The prompt says what that means. Without that line, Mistral claimed the cleaned file was ready, or that no file was uploaded: the agent prunes older tool results from the history, so the model no longer saw the profile. With it, 4 of 4 rejected runs got a truthful reply (checked 2026-10-16).
 - Export, import, and download are UI buttons only.
 
+## Pipeline panel
+
+- **The panel calls the agent directly** (callables, no LLM): `getTransformCatalog`, `getPipelineView`, `editPipelineStep`, and `runPipelineNow`. Their arguments come from the browser, so the dataset ID and each edit are checked with zod, and edits go through the same checks as the chat tools.
+- **Edits from the panel replace a step's parameters** (`replace`), because the form shows them all; the chat's `updateStep` merges instead.
+- **Live updates.** Synced state holds a `pipelineUpdatedAt` per dataset that changes on every save (at least 1 ms later than the last one). The panel reloads its view when it changes, so chat edits show up in the panel. The full step list stays out of synced state, because the view needs the sample anyway.
+- **The view** describes every step on the sample, with the columns each step sees (for the forms' column pickers), and up to 20 result rows, optionally up to a chosen step.
+- **Forms are built from each transform's JSON Schema** (made from its zod schema), so a new transform needs no UI code. Fields named `column`, `columns`, `otherColumn`, and `groupBy` get column pickers.
+- **Running from the panel** asks the user to confirm first, like the chat's approval card.
+
 ## Full runs and download
 
 - **A run always starts from the original upload** (`v0.csv`) and writes the next version (`v1.csv`, `v2.csv`, …). Older versions stay, so a bad run loses nothing.

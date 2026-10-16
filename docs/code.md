@@ -35,7 +35,7 @@ How the code is organized and how to write it. Read this before changing code. U
 
 One line per file or module. Keep this list current.
 
-- `src/server.ts`: Worker entry and `CobblerAgent`: chat loop and LLM call, upload and download routes, `datasets`, `pipelines`, and `runs` tables, preview sample loading, starting full runs, synced state, workflow callbacks.
+- `src/server.ts`: Worker entry and `CobblerAgent`: chat loop and LLM call, upload and download routes, `datasets`, `pipelines`, and `runs` tables, preview sample loading, starting full runs, synced state, workflow callbacks, and the callables the UI uses (profile, transform catalog, pipeline view, step edits, run).
 - `src/prompts.ts`: system prompt (with the transform catalog) and the tool descriptions and input schemas.
 - `src/pipeline-actions.ts`: pipeline edits, checks on the sample, and starting a checked run, shared by the LLM tools and the pipeline panel. They reach the agent through the `PipelineHost` interface. `pipelineEditSchema` validates edits that come from the browser.
 - `src/tools.ts`: the LLM tools, built on `src/pipeline-actions.ts`. They work on the latest upload. Tool input schemas are converted with zod (see `toolSchema`), not by the AI SDK.
@@ -64,5 +64,6 @@ A few steps per flow, once it exists.
 - **Pipeline edit (tool call):** `addStep` / `updateStep` / `removeStep` / `moveStep` -> load the preview sample (cached, or first 512 KB from R2) -> apply the edit to the stored pipeline -> run all steps on the sample -> refuse if the edited step fails, else save to `pipelines` -> return each step's summary to the LLM.
 - **Full run:** the LLM calls `runPipeline` -> the user approves in the chat -> the tool checks the steps on the preview rows -> `startRun` checks the dataset is ready and no run is in progress -> `runs` row (next version, status `running`, a copy of the steps) -> `RunWorkflow` (instance ID = run ID) reads `v0.csv`, runs every step, writes `{userId}/{datasetId}/v{n}.csv` -> `onWorkflowComplete` stores the report, or `onWorkflowError` stores the error -> state sync shows the latest run per dataset.
 - **Download:** browser `GET /agents/cobbler-agent/{userId}/download?run={runId}` -> `CobblerAgent.onRequest` finds a finished run -> streams the file from R2 as an attachment named like `sales-cleaned-v2.csv`.
+- **Pipeline edit (panel):** browser -> `editPipelineStep(datasetId, edit)` callable -> zod checks the dataset ID and the edit -> the same flow as a tool edit -> the save bumps `pipelineUpdatedAt` in synced state -> every open panel reloads its view with `getPipelineView`. Chat edits reach the panel the same way.
 - **Profile ready:** `onWorkflowComplete` also creates the dataset's pipeline with the safe steps the profile calls for.
 - **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.

@@ -22,7 +22,17 @@ import type { RunParams } from "./run-workflow";
 import { SYSTEM_PROMPT } from "./prompts";
 import { z } from "zod";
 import { tableFromRecords, type Table } from "./table";
-import type { DatasetInfo, PipelineHost } from "./pipeline-actions";
+import {
+  editPipeline,
+  pipelineEditSchema,
+  pipelineView,
+  readyDataset,
+  startCheckedRun,
+  transformCatalog,
+  type DatasetInfo,
+  type PipelineHost,
+  type TransformInfo
+} from "./pipeline-actions";
 import { createTools } from "./tools";
 import {
   assertLooksLikeText,
@@ -60,6 +70,8 @@ export interface DatasetSummary {
   issueCount: number | null;
   createdAt: number;
   latestRun: RunSummary | null;
+  /** Changes on every pipeline save, so the panel knows when to reload its view. */
+  pipelineUpdatedAt: number | null;
 }
 
 /** Agent state, synced to every connected browser. */
@@ -91,6 +103,12 @@ type RunRow = {
 };
 
 const runIdSchema = z.uuid();
+
+/** Arguments of the panel's callables. They come from the browser, so they are checked. */
+const panelInput = z.object({
+  datasetId: z.uuid(),
+  upToStepId: z.string().max(20).optional()
+});
 
 function datasetInfo(row: DatasetRow): DatasetInfo {
   return {
@@ -363,9 +381,11 @@ export class CobblerAgent
 
   /** Rebuilds the dataset list in the synced state from SQLite. */
   private syncState() {
-    const rows = this
-      .sql<DatasetRow>`select id, name, size, status, error, profile, created_at
-      from datasets order by created_at desc`;
+    const rows = this.sql<DatasetRow & { pipeline_updated_at: number | null }>`
+      select d.id, d.name, d.size, d.status, d.error, d.profile, d.created_at,
+        p.updated_at as pipeline_updated_at
+      from datasets d left join pipelines p on p.dataset_id = d.id
+      order by d.created_at desc`;
     const latestRuns = new Map<string, RunSummary>();
     // Newest first, so the first run seen for a dataset is its latest.
     for (const run of this
@@ -387,7 +407,8 @@ export class CobblerAgent
         columnCount: profile?.columnCount ?? null,
         issueCount: profile ? countIssues(profile) : null,
         createdAt: row.created_at,
-        latestRun: latestRuns.get(row.id) ?? null
+        latestRun: latestRuns.get(row.id) ?? null,
+        pipelineUpdatedAt: row.pipeline_updated_at
       };
     });
     this.setState({ ...this.state, datasets });
@@ -425,7 +446,10 @@ export class CobblerAgent
       .sql`insert into pipelines (id, dataset_id, steps, next_step_number, updated_at)
       values (${crypto.randomUUID()}, ${datasetId}, ${JSON.stringify(pipeline.steps)}, ${pipeline.nextStepNumber}, ${Date.now()})
       on conflict (dataset_id) do update set steps = excluded.steps,
-        next_step_number = excluded.next_step_number, updated_at = excluded.updated_at`;
+        next_step_number = excluded.next_step_number,
+        updated_at = max(excluded.updated_at, pipelines.updated_at + 1)`;
+    // The panel reloads its view when this time changes, so it must change on every save, even within a millisecond.
+    this.syncState();
   }
 
   async loadSample(datasetId: string, profile: DatasetProfile) {
@@ -457,6 +481,49 @@ export class CobblerAgent
     const [row] = this
       .sql<DatasetRow>`select profile from datasets where id = ${datasetId}`;
     return row?.profile ? (JSON.parse(row.profile) as DatasetProfile) : null;
+  }
+
+  /** Every transform with its parameters as JSON Schema, for the panel's step forms. */
+  @callable()
+  getTransformCatalog(): TransformInfo[] {
+    return transformCatalog();
+  }
+
+  /** The pipeline panel's view of a dataset: steps with their results on the sample, and the result rows. */
+  @callable()
+  async getPipelineView(datasetId: unknown, upToStepId?: unknown) {
+    const input = panelInput.safeParse({ datasetId, upToStepId });
+    if (!input.success) return { error: "Invalid request." };
+    const dataset = readyDataset(this.dataset(input.data.datasetId));
+    if ("error" in dataset) return dataset;
+    return pipelineView(this, dataset, input.data.upToStepId);
+  }
+
+  /** Applies one step edit from the pipeline panel, with the same checks as the chat tools. */
+  @callable()
+  async editPipelineStep(datasetId: unknown, edit: unknown) {
+    const input = panelInput.safeParse({ datasetId });
+    const parsedEdit = pipelineEditSchema.safeParse(edit);
+    if (!input.success || !parsedEdit.success)
+      return { error: "Invalid request." };
+    const dataset = readyDataset(this.dataset(input.data.datasetId));
+    if ("error" in dataset) return dataset;
+    const result = await editPipeline(this, dataset, parsedEdit.data);
+    if ("error" in result) return result;
+    return {
+      saved: true,
+      ...(result.warning ? { warning: result.warning } : {})
+    };
+  }
+
+  /** Starts a full run from the pipeline panel. The panel asks the user to confirm before it calls this. */
+  @callable()
+  async runPipelineNow(datasetId: unknown) {
+    const input = panelInput.safeParse({ datasetId });
+    if (!input.success) return { error: "Invalid request." };
+    const dataset = readyDataset(this.dataset(input.data.datasetId));
+    if ("error" in dataset) return dataset;
+    return startCheckedRun(this, dataset);
   }
 
   async onChatMessage(_onFinish: unknown, options?: OnChatMessageOptions) {

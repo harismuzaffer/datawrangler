@@ -12,6 +12,7 @@ import {
 import type { DatasetProfile } from "./profile";
 import type { RunSummary } from "./server";
 import type { Table } from "./table";
+import { TRANSFORMS, type TransformName } from "./transforms";
 
 export interface DatasetInfo {
   id: string;
@@ -195,4 +196,69 @@ export async function startCheckedRun(
       error: `The run did not start. Step ${failing.id} fails: ${failing.summary}`
     };
   return host.startRun(dataset.id);
+}
+
+/** How many result rows the pipeline panel shows. */
+const VIEW_ROWS = 20;
+
+/** The pipeline as the panel shows it: each step with what it did on the sample and the columns it saw, then the result rows. */
+export async function pipelineView(
+  host: PipelineHost,
+  dataset: ReadyDataset,
+  upToStepId?: string
+) {
+  const steps = host.loadPipeline(dataset.id).steps;
+  if (upToStepId && !steps.some((s) => s.id === upToStepId))
+    return { error: `There is no step "${upToStepId}".` };
+  const sample = await host.loadSample(dataset.id, dataset.profile);
+  // Every step is described even when the rows stop early, so the list stays complete.
+  const all = buildPreview(sample.table, steps, {
+    partial: sample.partial,
+    columnsBefore: true
+  });
+  const upTo = buildPreview(sample.table, steps, {
+    upToStepId,
+    partial: sample.partial,
+    rows: VIEW_ROWS
+  });
+  return {
+    steps: all.steps,
+    upToStepId: upToStepId ?? null,
+    sampleRows: all.sampleRows,
+    partial: all.partial,
+    columns: upTo.columns,
+    rowCount: upTo.rowCount,
+    rows: upTo.rows
+  };
+}
+
+export type PipelineView = Exclude<
+  Awaited<ReturnType<typeof pipelineView>>,
+  { error: string }
+>;
+
+/** What the panel needs to offer a transform: its usage text, flags, and parameters as JSON Schema. */
+export interface TransformInfo {
+  name: TransformName;
+  usage: string;
+  safe: boolean;
+  wholeFile: boolean;
+  schema: Record<string, unknown>;
+}
+
+/** Every transform, for the panel's add and edit forms. */
+export function transformCatalog(): TransformInfo[] {
+  return Object.entries(TRANSFORMS).map(([name, t]) => {
+    const { $schema: _, ...schema } = z.toJSONSchema(t.params, {
+      io: "input",
+      target: "draft-7"
+    });
+    return {
+      name: name as TransformName,
+      usage: t.usage,
+      safe: t.safe ?? false,
+      wholeFile: t.wholeFile ?? false,
+      schema
+    };
+  });
 }
