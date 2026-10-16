@@ -1,8 +1,8 @@
 {
-  "name": "agent-starter",
+  "name": "datacobbler",
   "version": "1.0.0",
   "private": true,
-  "description": "Starter template for building AI chat agents on Cloudflare",
+  "description": "Chat agent that cleans and reshapes messy CSV files, built on Cloudflare",
   "keywords": [
     "agents",
     "ai",
@@ -17,7 +17,8 @@
     "types": "wrangler types env.d.ts",
     "format": "oxfmt --write .",
     "lint": "oxlint src/",
-    "check": "oxfmt --check . && oxlint src/ && tsc"
+    "check": "oxfmt --check . && oxlint src/ && tsc",
+    "test": "vitest run"
   },
   "dependencies": {
     "@cloudflare/ai-chat": "^0.9.3",
@@ -26,6 +27,7 @@
     "@streamdown/code": "^1.1.1",
     "agents": "^0.17.4",
     "ai": "^6.0.197",
+    "papaparse": "^5.5.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "streamdown": "^2.5.0",
@@ -38,6 +40,7 @@
     "@rolldown/plugin-babel": "^0.2.3",
     "@tailwindcss/vite": "^4.3.1",
     "@types/node": "^26.6.5",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
@@ -46,6 +49,7 @@
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
     "vite": "^8.1.0",
+    "vitest": "^5.0.4",
     "wrangler": "^4.149.0"
   },
   "allowScripts": {

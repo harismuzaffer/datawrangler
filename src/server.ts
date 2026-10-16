@@ -1,206 +1,703 @@
 import { createWorkersAI } from "workers-ai-provider";
-import { callable, routeAgentRequest, type Schedule } from "agents";
-import { getSchedulePrompt, scheduleSchema } from "agents/schedule";
+import { callable, routeAgentRequest, type Connection } from "agents";
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
 import {
   convertToModelMessages,
   pruneMessages,
   stepCountIs,
-  streamText,
-  tool
+  streamText
 } from "ai";
+import { withStreamFix } from "./ai-binding";
+import { parseSample, SAMPLE_BYTES } from "./csv";
+import { cleanedFileName, contentDisposition } from "./download";
+import {
+  emptyPipeline,
+  safePipeline,
+  type Pipeline,
+  type RunReport
+} from "./pipeline";
+import type { DatasetProfile } from "./profile";
+import type { ProfileParams } from "./profile-workflow";
+import type { RunParams } from "./run-workflow";
+import {
+  MAX_PREFERENCES,
+  preferenceTextSchema,
+  type MemoryHost,
+  type Preference
+} from "./memory";
+import {
+  exportPipeline,
+  parsePipelineFile,
+  PipelineFileError
+} from "./pipeline-file";
+import { systemPrompt } from "./prompts";
 import { z } from "zod";
+import { tableFromRecords, type Table } from "./table";
+import {
+  columnMappingSchema,
+  editPipeline,
+  pipelineEditSchema,
+  replacePipeline,
+  pipelineView,
+  readyDataset,
+  startCheckedRun,
+  transformCatalog,
+  type DatasetInfo,
+  type PipelineHost,
+  type TransformInfo
+} from "./pipeline-actions";
+import { createTools } from "./tools";
+import {
+  assertLooksLikeText,
+  fileNameSchema,
+  readBodyWithLimit,
+  UploadError,
+  userIdSchema
+} from "./upload";
 
-export class ChatAgent extends AIChatAgent<Env> {
+export { ProfileWorkflow } from "./profile-workflow";
+export { RunWorkflow } from "./run-workflow";
+
+export type DatasetStatus = "profiling" | "ready" | "failed";
+export type RunStatus = "running" | "done" | "failed";
+
+/** What the browser sees about the latest full run of a dataset. */
+export interface RunSummary {
+  id: string;
+  version: number;
+  status: RunStatus;
+  error: string | null;
+  rowCount: number | null;
+  columnCount: number | null;
+}
+
+/** What the browser sees about one uploaded file. The full profile is fetched separately because it can be large. */
+export interface DatasetSummary {
+  id: string;
+  name: string;
+  size: number;
+  status: DatasetStatus;
+  error: string | null;
+  rowCount: number | null;
+  columnCount: number | null;
+  issueCount: number | null;
+  createdAt: number;
+  latestRun: RunSummary | null;
+  /** Changes on every pipeline save, so the panel knows when to reload its view. */
+  pipelineUpdatedAt: number | null;
+}
+
+/** Agent state, synced to every connected browser. */
+export interface AgentState {
+  datasets: DatasetSummary[];
+  /** The user's saved preferences (memory), oldest first. */
+  preferences: Preference[];
+}
+
+type DatasetRow = {
+  id: string;
+  name: string;
+  size: number;
+  r2_key: string;
+  status: DatasetStatus;
+  error: string | null;
+  profile: string | null;
+  created_at: number;
+};
+
+type PipelineRow = { steps: string; next_step_number: number };
+
+type RunRow = {
+  id: string;
+  dataset_id: string;
+  version: number;
+  status: RunStatus;
+  r2_key: string;
+  report: string | null;
+  error: string | null;
+};
+
+const runIdSchema = z.uuid();
+
+/** Arguments of the panel's callables. They come from the browser, so they are checked. */
+const panelInput = z.object({
+  datasetId: z.uuid(),
+  // A missing argument arrives as null after the trip through JSON.
+  upToStepId: z.string().max(20).nullish()
+});
+
+function datasetInfo(row: DatasetRow): DatasetInfo {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    error: row.error,
+    profile: row.profile ? (JSON.parse(row.profile) as DatasetProfile) : null
+  };
+}
+
+function runSummary(run: RunRow): RunSummary {
+  const report = run.report ? (JSON.parse(run.report) as RunReport) : null;
+  return {
+    id: run.id,
+    version: run.version,
+    status: run.status,
+    error: run.error,
+    rowCount: report?.rowCount ?? null,
+    columnCount: report?.columnCount ?? null
+  };
+}
+
+function countIssues(profile: DatasetProfile): number {
+  return (
+    profile.issues.length +
+    profile.columns.reduce((sum, column) => sum + column.issues.length, 0)
+  );
+}
+
+/** One chat agent per user. Chat history and datasets persist in the agent's SQLite storage. */
+export class CobblerAgent
+  extends AIChatAgent<Env, AgentState>
+  implements PipelineHost, MemoryHost
+{
+  initialState: AgentState = { datasets: [], preferences: [] };
+  /** Preview samples by dataset ID. Files never change after upload, so a sample stays valid while the agent is awake. */
+  private samples = new Map<string, { table: Table; partial: boolean }>();
   maxPersistedMessages = 100;
   chatRecovery = true;
-  // Wait for MCP connections to be re-established after hibernation before
-  // processing a message, so MCP tools aren't intermittently missing.
-  waitForMcpConnections = true;
 
-  onStart() {
-    // Configure OAuth popup behavior for MCP servers that require authentication
-    this.mcp.configureOAuthCallback({
-      customHandler: (result) => {
-        if (result.authSuccess) {
-          return new Response("<script>window.close();</script>", {
-            headers: { "content-type": "text/html" },
-            status: 200
-          });
-        }
-        return new Response(
-          `Authentication Failed: ${result.authError || "Unknown error"}`,
-          { headers: { "content-type": "text/plain" }, status: 400 }
-        );
+  // State mirrors the datasets table, so only the agent may change it, never a browser.
+  validateStateChange(_nextState: AgentState, source: Connection | "server") {
+    if (source !== "server") throw new Error("State is read-only for clients.");
+  }
+
+  async onStart() {
+    this.sql`create table if not exists datasets (
+      id text primary key,
+      name text not null,
+      size integer not null,
+      r2_key text not null,
+      status text not null,
+      error text,
+      profile text,
+      created_at integer not null
+    )`;
+    // One pipeline per dataset for now. It has its own ID so saved, reusable pipelines can be added later.
+    this.sql`create table if not exists pipelines (
+      id text primary key,
+      dataset_id text not null unique,
+      steps text not null,
+      next_step_number integer not null,
+      updated_at integer not null
+    )`;
+    // Each full run writes a new file version; `steps` keeps the pipeline that made it.
+    this.sql`create table if not exists runs (
+      id text primary key,
+      dataset_id text not null,
+      version integer not null,
+      status text not null,
+      steps text not null,
+      r2_key text not null,
+      report text,
+      error text,
+      created_at integer not null,
+      finished_at integer,
+      unique (dataset_id, version)
+    )`;
+    this.sql`create table if not exists preferences (
+      id text primary key,
+      text text not null,
+      created_at integer not null
+    )`;
+    // Agents created before preferences existed have state without them.
+    if (!this.state.preferences) this.syncState();
+  }
+
+  async onRequest(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname.endsWith("/download"))
+      return this.download(url);
+    if (request.method === "POST" && url.pathname.endsWith("/upload")) {
+      try {
+        return Response.json(await this.upload(request, url));
+      } catch (error) {
+        if (error instanceof UploadError)
+          return Response.json(
+            { error: error.message },
+            { status: error.status }
+          );
+        throw error;
+      }
+    }
+    return new Response("Not found", { status: 404 });
+  }
+
+  /** Stores an uploaded CSV in R2 and starts profiling it. */
+  private async upload(request: Request, url: URL) {
+    if (!userIdSchema.safeParse(this.name).success)
+      throw new UploadError("Invalid user.", 400);
+    const fileName = fileNameSchema.safeParse(url.searchParams.get("name"));
+    if (!fileName.success) throw new UploadError("Invalid file name.", 400);
+
+    const bytes = await readBodyWithLimit(request);
+    assertLooksLikeText(bytes);
+
+    const id = crypto.randomUUID();
+    const r2Key = `${this.name}/${id}/v0.csv`;
+    await this.env.FILES.put(r2Key, bytes, {
+      httpMetadata: { contentType: "text/csv" }
+    });
+    this.sql`insert into datasets (id, name, size, r2_key, status, created_at)
+      values (${id}, ${fileName.data}, ${bytes.byteLength}, ${r2Key}, 'profiling', ${Date.now()})`;
+    this.syncState();
+
+    try {
+      // Use the dataset ID as the workflow ID, so callbacks can find the dataset without a lookup table.
+      await this.runWorkflow<ProfileParams>(
+        "PROFILE_WORKFLOW",
+        { datasetId: id, r2Key },
+        { id }
+      );
+    } catch (error) {
+      this.markFailed(
+        id,
+        "Could not start reading the file. Please try again."
+      );
+      throw error;
+    }
+    return { id };
+  }
+
+  /** Sends the file a finished run wrote, as an attachment. */
+  private async download(url: URL): Promise<Response> {
+    const runId = runIdSchema.safeParse(url.searchParams.get("run"));
+    if (!runId.success) return new Response("Invalid run.", { status: 400 });
+    const [run] = this.sql<RunRow & { name: string }>`
+      select runs.*, datasets.name from runs join datasets on datasets.id = runs.dataset_id
+      where runs.id = ${runId.data} and runs.status = 'done'`;
+    if (!run) return new Response("Not found", { status: 404 });
+    const object = await this.env.FILES.get(run.r2_key);
+    if (!object) return new Response("Not found", { status: 404 });
+    return new Response(object.body, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Length": String(object.size),
+        "Content-Disposition": contentDisposition(
+          cleanedFileName(run.name, run.version)
+        ),
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff"
       }
     });
   }
 
-  @callable()
-  async addServer(name: string, url: string) {
-    return await this.addMcpServer(name, url);
+  /**
+   * Starts a full run of the dataset's current pipeline. The result becomes the next file version.
+   * Returns a message instead when the run cannot start, for the LLM or the UI to show.
+   */
+  async startRun(
+    datasetId: string
+  ): Promise<{ runId: string; version: number } | { error: string }> {
+    const [dataset] = this
+      .sql<DatasetRow>`select * from datasets where id = ${datasetId}`;
+    if (dataset?.status !== "ready")
+      return { error: "The file is not ready to run yet." };
+    const [running] = this
+      .sql<RunRow>`select id from runs where dataset_id = ${datasetId} and status = 'running'`;
+    if (running) return { error: "A run of this file is already in progress." };
+
+    // No await between reading the last version and inserting the new one, so two runs cannot get the same version.
+    const [{ last }] = this.sql<{
+      last: number | null;
+    }>`select max(version) as last from runs where dataset_id = ${datasetId}`;
+    const version = (last ?? 0) + 1;
+    const runId = crypto.randomUUID();
+    const outputKey = `${this.name}/${datasetId}/v${version}.csv`;
+    const { steps } = this.loadPipeline(datasetId);
+    this
+      .sql`insert into runs (id, dataset_id, version, status, steps, r2_key, created_at)
+      values (${runId}, ${datasetId}, ${version}, 'running', ${JSON.stringify(steps)}, ${outputKey}, ${Date.now()})`;
+    this.syncState();
+
+    try {
+      await this.runWorkflow<RunParams>(
+        "RUN_WORKFLOW",
+        { inputKey: dataset.r2_key, outputKey, steps },
+        { id: runId }
+      );
+    } catch (error) {
+      console.error("Could not start run:", runId, error);
+      this.finishRun(runId, {
+        error: "Could not start the run. Please try again."
+      });
+      return { error: "Could not start the run. Please try again." };
+    }
+    return { runId, version };
   }
 
+  /** Records the end of a run. Only a run still marked running changes, so a repeated callback changes nothing. */
+  private finishRun(
+    runId: string,
+    outcome: { report: RunReport } | { error: string }
+  ) {
+    if ("report" in outcome)
+      this
+        .sql`update runs set status = 'done', report = ${JSON.stringify(outcome.report)}, finished_at = ${Date.now()}
+        where id = ${runId} and status = 'running'`;
+    else
+      this
+        .sql`update runs set status = 'failed', error = ${outcome.error}, finished_at = ${Date.now()}
+        where id = ${runId} and status = 'running'`;
+    this.syncState();
+  }
+
+  async onWorkflowComplete(
+    workflowName: string,
+    workflowId: string,
+    result?: unknown
+  ) {
+    if (workflowName === "RUN_WORKFLOW") {
+      this.finishRun(workflowId, { report: result as RunReport });
+      return;
+    }
+    const profile = result as DatasetProfile;
+    // Only a dataset still being profiled is updated, so a repeated callback changes nothing.
+    this
+      .sql`update datasets set status = 'ready', profile = ${JSON.stringify(profile)}, error = null
+      where id = ${workflowId} and status = 'profiling'`;
+    const pipeline = safePipeline(profile);
+    this
+      .sql`insert or ignore into pipelines (id, dataset_id, steps, next_step_number, updated_at)
+      values (${crypto.randomUUID()}, ${workflowId}, ${JSON.stringify(pipeline.steps)}, ${pipeline.nextStepNumber}, ${Date.now()})`;
+    this.syncState();
+  }
+
+  async onWorkflowError(
+    workflowName: string,
+    workflowId: string,
+    error: string
+  ) {
+    // The workflows mark only user-facing messages as non-retryable; anything else is an internal error.
+    const userMessage = /^NonRetryableError: (.+)$/s.exec(error)?.[1];
+    if (!userMessage)
+      console.error("Workflow failed:", workflowName, workflowId, error);
+    if (workflowName === "RUN_WORKFLOW") {
+      this.finishRun(workflowId, {
+        error:
+          userMessage ??
+          "Something went wrong while running the pipeline. Please try again."
+      });
+      return;
+    }
+    this.markFailed(
+      workflowId,
+      userMessage ??
+        "Something went wrong while reading the file. Please try again."
+    );
+  }
+
+  private markFailed(id: string, error: string) {
+    this
+      .sql`update datasets set status = 'failed', error = ${error} where id = ${id} and status = 'profiling'`;
+    this.syncState();
+  }
+
+  /** Rebuilds the dataset list in the synced state from SQLite. */
+  private syncState() {
+    const rows = this.sql<DatasetRow & { pipeline_updated_at: number | null }>`
+      select d.id, d.name, d.size, d.status, d.error, d.profile, d.created_at,
+        p.updated_at as pipeline_updated_at
+      from datasets d left join pipelines p on p.dataset_id = d.id
+      order by d.created_at desc`;
+    const latestRuns = new Map<string, RunSummary>();
+    // Newest first, so the first run seen for a dataset is its latest.
+    for (const run of this
+      .sql<RunRow>`select * from runs order by version desc`) {
+      if (!latestRuns.has(run.dataset_id))
+        latestRuns.set(run.dataset_id, runSummary(run));
+    }
+    const datasets = rows.map((row): DatasetSummary => {
+      const profile = row.profile
+        ? (JSON.parse(row.profile) as DatasetProfile)
+        : null;
+      return {
+        id: row.id,
+        name: row.name,
+        size: row.size,
+        status: row.status,
+        error: row.error,
+        rowCount: profile?.rowCount ?? null,
+        columnCount: profile?.columnCount ?? null,
+        issueCount: profile ? countIssues(profile) : null,
+        createdAt: row.created_at,
+        latestRun: latestRuns.get(row.id) ?? null,
+        pipelineUpdatedAt: row.pipeline_updated_at
+      };
+    });
+    this.setState({ ...this.state, datasets, preferences: this.preferences() });
+  }
+
+  latestDataset(): DatasetInfo | null {
+    const [row] = this
+      .sql<DatasetRow>`select * from datasets order by created_at desc limit 1`;
+    return row ? datasetInfo(row) : null;
+  }
+
+  earlierPipelines(exceptDatasetId: string) {
+    const rows = this.sql<{ id: string; name: string; steps: string }>`
+      select d.id, d.name, p.steps from datasets d join pipelines p on p.dataset_id = d.id
+      where d.id != ${exceptDatasetId} and p.steps != '[]'
+      order by d.created_at desc limit 20`;
+    return rows.map((row) => ({
+      datasetId: row.id,
+      name: row.name,
+      steps: JSON.parse(row.steps) as Pipeline["steps"]
+    }));
+  }
+
+  preferences(): Preference[] {
+    return this.sql<{ id: string; text: string; created_at: number }>`
+      select id, text, created_at from preferences order by created_at, id`.map(
+      (row) => ({ id: row.id, text: row.text, createdAt: row.created_at })
+    );
+  }
+
+  addPreference(text: string): Preference | { error: string } {
+    const saved = this.preferences();
+    const same = saved.find((p) => p.text.toLowerCase() === text.toLowerCase());
+    if (same) return same;
+    if (saved.length >= MAX_PREFERENCES)
+      return {
+        error: `You can keep up to ${MAX_PREFERENCES} preferences. Remove one first.`
+      };
+    // Short IDs, because the LLM reads and repeats them.
+    const preference = {
+      id: `p${crypto.randomUUID().slice(0, 8)}`,
+      text,
+      createdAt: Date.now()
+    };
+    this
+      .sql`insert into preferences (id, text, created_at) values (${preference.id}, ${text}, ${preference.createdAt})`;
+    this.syncState();
+    return preference;
+  }
+
+  removePreference(id: string): boolean {
+    const [found] = this.sql<{
+      id: string;
+    }>`select id from preferences where id = ${id}`;
+    if (!found) return false;
+    this.sql`delete from preferences where id = ${id}`;
+    this.syncState();
+    return true;
+  }
+
+  /** Saves a preference the user typed in the Memory panel. Typed by the user, so no approval is needed. */
   @callable()
-  async removeServer(serverId: string) {
-    await this.removeMcpServer(serverId);
+  savePreference(text: unknown) {
+    const parsed = preferenceTextSchema.safeParse(text);
+    if (!parsed.success)
+      return {
+        error: parsed.error.issues[0]?.message ?? "Invalid preference."
+      };
+    return this.addPreference(parsed.data);
+  }
+
+  /** Deletes a preference from the Memory panel. */
+  @callable()
+  deletePreference(id: unknown) {
+    if (typeof id !== "string" || id.length > 40)
+      return { error: "Invalid request." };
+    return { deleted: this.removePreference(id) };
+  }
+
+  dataset(id: string): DatasetInfo | null {
+    const [row] = this.sql<DatasetRow>`select * from datasets where id = ${id}`;
+    return row ? datasetInfo(row) : null;
+  }
+
+  latestRun(datasetId: string): RunSummary | null {
+    const [run] = this
+      .sql<RunRow>`select * from runs where dataset_id = ${datasetId} order by version desc limit 1`;
+    return run ? runSummary(run) : null;
+  }
+
+  loadPipeline(datasetId: string): Pipeline {
+    const [row] = this
+      .sql<PipelineRow>`select steps, next_step_number from pipelines where dataset_id = ${datasetId}`;
+    if (!row) return emptyPipeline();
+    return {
+      steps: JSON.parse(row.steps) as Pipeline["steps"],
+      nextStepNumber: row.next_step_number
+    };
+  }
+
+  savePipeline(datasetId: string, pipeline: Pipeline) {
+    this
+      .sql`insert into pipelines (id, dataset_id, steps, next_step_number, updated_at)
+      values (${crypto.randomUUID()}, ${datasetId}, ${JSON.stringify(pipeline.steps)}, ${pipeline.nextStepNumber}, ${Date.now()})
+      on conflict (dataset_id) do update set steps = excluded.steps,
+        next_step_number = excluded.next_step_number,
+        updated_at = max(excluded.updated_at, pipelines.updated_at + 1)`;
+    // The panel reloads its view when this time changes, so it must change on every save, even within a millisecond.
+    this.syncState();
+  }
+
+  async loadSample(datasetId: string, profile: DatasetProfile) {
+    const cached = this.samples.get(datasetId);
+    if (cached) return cached;
+    const [row] = this
+      .sql<DatasetRow>`select * from datasets where id = ${datasetId}`;
+    if (!row) throw new Error(`Dataset ${datasetId} not found`);
+    // Only the start of the file is needed, so read a byte range instead of the whole file.
+    const object = await this.env.FILES.get(row.r2_key, {
+      range: { offset: 0, length: SAMPLE_BYTES }
+    });
+    if (!object) throw new Error(`File for dataset ${datasetId} is missing`);
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    const records = parseSample(bytes, {
+      encoding: profile.encoding,
+      delimiter: profile.delimiter,
+      truncated: row.size > bytes.byteLength
+    });
+    const table = tableFromRecords(records, profile.columnCount);
+    const sample = { table, partial: table.rows.length < profile.rowCount };
+    this.samples.set(datasetId, sample);
+    return sample;
+  }
+
+  /** Returns the full profile of a dataset for the UI, or null if it is not ready. */
+  @callable()
+  getProfile(datasetId: string): DatasetProfile | null {
+    const [row] = this
+      .sql<DatasetRow>`select profile from datasets where id = ${datasetId}`;
+    return row?.profile ? (JSON.parse(row.profile) as DatasetProfile) : null;
+  }
+
+  /** Every transform with its parameters as JSON Schema, for the panel's step forms. */
+  @callable()
+  getTransformCatalog(): TransformInfo[] {
+    return transformCatalog();
+  }
+
+  /** The pipeline panel's view of a dataset: steps with their results on the sample, and the result rows. */
+  @callable()
+  async getPipelineView(datasetId: unknown, upToStepId?: unknown) {
+    const input = panelInput.safeParse({ datasetId, upToStepId });
+    if (!input.success) return { error: "Invalid request." };
+    const dataset = readyDataset(this.dataset(input.data.datasetId));
+    if ("error" in dataset) return dataset;
+    return pipelineView(this, dataset, input.data.upToStepId ?? undefined);
+  }
+
+  /** Applies one step edit from the pipeline panel, with the same checks as the chat tools. */
+  @callable()
+  async editPipelineStep(datasetId: unknown, edit: unknown) {
+    const input = panelInput.safeParse({ datasetId });
+    const parsedEdit = pipelineEditSchema.safeParse(edit);
+    if (!input.success || !parsedEdit.success)
+      return { error: "Invalid request." };
+    const dataset = readyDataset(this.dataset(input.data.datasetId));
+    if ("error" in dataset) return dataset;
+    const result = await editPipeline(this, dataset, parsedEdit.data);
+    if ("error" in result) return result;
+    return {
+      saved: true as const,
+      ...(result.warning ? { warning: result.warning } : {})
+    };
+  }
+
+  /** The dataset's pipeline as a file the user can save and import later. */
+  @callable()
+  exportPipeline(datasetId: unknown) {
+    const input = panelInput.safeParse({ datasetId });
+    if (!input.success) return { error: "Invalid request." };
+    const dataset = this.dataset(input.data.datasetId);
+    if (!dataset) return { error: "There is no such file." };
+    return {
+      file: exportPipeline(this.loadPipeline(dataset.id).steps, dataset.name)
+    };
+  }
+
+  /**
+   * Replaces the dataset's pipeline with one from a pipeline file the user picked.
+   * Returns `needsMapping` when the file's steps use columns this file lacks; the panel then asks the user and calls again with a mapping.
+   */
+  @callable()
+  async importPipeline(datasetId: unknown, text: unknown, mapping?: unknown) {
+    const input = panelInput.safeParse({ datasetId });
+    const parsedMapping = columnMappingSchema.nullish().safeParse(mapping);
+    if (!input.success || typeof text !== "string" || !parsedMapping.success)
+      return { error: "Invalid request." };
+    const dataset = readyDataset(this.dataset(input.data.datasetId));
+    if ("error" in dataset) return dataset;
+    let file: ReturnType<typeof parsePipelineFile>;
+    try {
+      file = parsePipelineFile(text);
+    } catch (error) {
+      if (error instanceof PipelineFileError) return { error: error.message };
+      throw error;
+    }
+    return replacePipeline(
+      this,
+      dataset,
+      file.steps,
+      parsedMapping.data ?? undefined
+    );
+  }
+
+  /** Starts a full run from the pipeline panel. The panel asks the user to confirm before it calls this. */
+  @callable()
+  async runPipelineNow(datasetId: unknown) {
+    const input = panelInput.safeParse({ datasetId });
+    if (!input.success) return { error: "Invalid request." };
+    const dataset = readyDataset(this.dataset(input.data.datasetId));
+    if ("error" in dataset) return dataset;
+    return startCheckedRun(this, dataset);
   }
 
   async onChatMessage(_onFinish: unknown, options?: OnChatMessageOptions) {
-    const mcpTools = this.mcp.getAITools();
-    const workersai = createWorkersAI({ binding: this.env.AI });
+    const workersai = createWorkersAI({ binding: withStreamFix(this.env.AI) });
 
     const result = streamText({
-      model: workersai("@cf/moonshotai/kimi-k2.7-code", {
+      model: workersai("@cf/openai/gpt-oss-120b", {
         sessionAffinity: this.sessionAffinity
       }),
-      system: `You are a helpful assistant that can understand images. You can check the weather, get the user's timezone, run calculations, and schedule tasks. When users share images, describe what you see and answer questions about them.
-
-${getSchedulePrompt({ date: new Date() })}
-
-If the user asks to schedule a task, use the schedule tool to schedule the task.`,
-      // Prune old tool calls and reasoning to save tokens on long conversations
+      system: systemPrompt(this.preferences()),
+      // Old results of the large tools are pruned to save tokens. The small tools that act (memory, run, reuse) stay:
+      // when the model saw "I saved it" in the history without the tool call beside it, it copied that and stopped calling tools.
       messages: pruneMessages({
         messages: await convertToModelMessages(this.messages),
-        toolCalls: "before-last-2-messages",
+        toolCalls: [
+          {
+            type: "before-last-2-messages",
+            tools: [
+              "getProfile",
+              "previewPipeline",
+              "addStep",
+              "updateStep",
+              "removeStep",
+              "moveStep"
+            ]
+          }
+        ],
         reasoning: "before-last-message"
       }),
-      tools: {
-        // MCP tools from connected servers
-        ...mcpTools,
-
-        // Server-side tool: runs automatically on the server
-        getWeather: tool({
-          description: "Get the current weather for a city",
-          inputSchema: z.object({
-            city: z.string().describe("City name")
-          }),
-          execute: async ({ city }) => {
-            // Replace with a real weather API in production
-            const conditions = ["sunny", "cloudy", "rainy", "snowy"];
-            const temp = Math.floor(Math.random() * 30) + 5;
-            return {
-              city,
-              temperature: temp,
-              condition:
-                conditions[Math.floor(Math.random() * conditions.length)],
-              unit: "celsius"
-            };
-          }
-        }),
-
-        // Client-side tool: no execute function — the browser handles it
-        getUserTimezone: tool({
-          description:
-            "Get the user's timezone from their browser. Use this when you need to know the user's local time.",
-          inputSchema: z.object({})
-        }),
-
-        // Approval tool: requires user confirmation before executing
-        calculate: tool({
-          description:
-            "Perform a math calculation with two numbers. Requires user approval for large numbers.",
-          inputSchema: z.object({
-            a: z.number().describe("First number"),
-            b: z.number().describe("Second number"),
-            operator: z
-              .enum(["+", "-", "*", "/", "%"])
-              .describe("Arithmetic operator")
-          }),
-          needsApproval: async ({ a, b }) =>
-            Math.abs(a) > 1000 || Math.abs(b) > 1000,
-          execute: async ({ a, b, operator }) => {
-            const ops: Record<string, (x: number, y: number) => number> = {
-              "+": (x, y) => x + y,
-              "-": (x, y) => x - y,
-              "*": (x, y) => x * y,
-              "/": (x, y) => x / y,
-              "%": (x, y) => x % y
-            };
-            if (operator === "/" && b === 0) {
-              return { error: "Division by zero" };
-            }
-            return {
-              expression: `${a} ${operator} ${b}`,
-              result: ops[operator](a, b)
-            };
-          }
-        }),
-
-        scheduleTask: tool({
-          description:
-            "Schedule a task to be executed at a later time. Use this when the user asks to be reminded or wants something done later.",
-          inputSchema: scheduleSchema,
-          execute: async ({ when, description }) => {
-            if (when.type === "no-schedule") {
-              return "Not a valid schedule input";
-            }
-            const input =
-              when.type === "scheduled"
-                ? when.date
-                : when.type === "delayed"
-                  ? when.delayInSeconds
-                  : when.type === "cron"
-                    ? when.cron
-                    : null;
-            if (!input) return "Invalid schedule type";
-            try {
-              this.schedule(input, "executeTask", description, {
-                idempotent: true
-              });
-              return `Task scheduled: "${description}" (${when.type}: ${input})`;
-            } catch (error) {
-              return `Error scheduling task: ${error}`;
-            }
-          }
-        }),
-
-        getScheduledTasks: tool({
-          description: "List all tasks that have been scheduled",
-          inputSchema: z.object({}),
-          execute: async () => {
-            const tasks = this.getSchedules();
-            return tasks.length > 0 ? tasks : "No scheduled tasks found.";
-          }
-        }),
-
-        cancelScheduledTask: tool({
-          description: "Cancel a scheduled task by its ID",
-          inputSchema: z.object({
-            taskId: z.string().describe("The ID of the task to cancel")
-          }),
-          execute: async ({ taskId }) => {
-            try {
-              this.cancelSchedule(taskId);
-              return `Task ${taskId} cancelled.`;
-            } catch (error) {
-              return `Error cancelling task: ${error}`;
-            }
-          }
-        })
-      },
+      tools: createTools(this),
+      // Workers AI stops at 256 output tokens by default. Reasoning models use most of that before a tool call,
+      // so the call's arguments were cut off and failed to parse.
+      maxOutputTokens: 4096,
       stopWhen: stepCountIs(20),
       abortSignal: options?.abortSignal
     });
 
-    return result.toUIMessageStreamResponse();
-  }
-
-  async executeTask(description: string, _task: Schedule<string>) {
-    // Do the actual work here (send email, call API, etc.)
-    console.log(`Executing scheduled task: ${description}`);
-
-    // Notify connected clients via a broadcast event.
-    // We use broadcast() instead of saveMessages() to avoid injecting
-    // into chat history — that would cause the AI to see the notification
-    // as new context and potentially loop.
-    this.broadcast(
-      JSON.stringify({
-        type: "scheduled-task",
-        description,
-        timestamp: new Date().toISOString()
-      })
-    );
+    return result.toUIMessageStreamResponse({
+      // The browser gets a generic message; the real cause goes to the log.
+      onError: (error) => {
+        console.error("Chat stream error:", error);
+        return "Something went wrong. Please try again.";
+      }
+    });
   }
 }
 
