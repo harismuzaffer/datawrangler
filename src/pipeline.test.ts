@@ -135,6 +135,12 @@ describe("runSteps", () => {
     expect(runs[1].error).toMatch(/no column "city"/);
   });
 
+  it("runs an empty pipeline, leaving the table as it was", () => {
+    const { table, runs } = runSteps(sample(), []);
+    expect(runs).toEqual([]);
+    expect(table).toEqual(sample());
+  });
+
   it("runs only up to a step", () => {
     const p = build(["trim", { columns: "*" }], ["dropEmptyRows", {}]);
     expect(runSteps(sample(), p.steps, "s1").runs.length).toBe(1);

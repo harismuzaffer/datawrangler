@@ -169,7 +169,8 @@ export function runSteps(
     upToStepId === undefined
       ? steps.length - 1
       : steps.findIndex((s) => s.id === upToStepId);
-  if (last === -1) throw new PipelineError(`There is no step "${upToStepId}".`);
+  if (upToStepId !== undefined && last === -1)
+    throw new PipelineError(`There is no step "${upToStepId}".`);
   return applySteps(cloneTable(input), steps.slice(0, last + 1));
 }
 
