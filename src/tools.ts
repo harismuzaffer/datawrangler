@@ -9,6 +9,7 @@ import {
   type PipelineEdit,
   type PipelineHost
 } from "./pipeline-actions";
+import { preferenceTextSchema, type MemoryHost } from "./memory";
 import { findMissingColumns } from "./pipeline-file";
 import { profileForLlm } from "./profile-summary";
 import { TOOL_SPECS } from "./prompts";
@@ -79,7 +80,7 @@ function findEarlier(host: PipelineHost, datasetId: string, name: string) {
 }
 
 /** Builds the LLM tools for one chat turn. */
-export function createTools(host: PipelineHost) {
+export function createTools(host: PipelineHost & MemoryHost) {
   return {
     getProfile: tool({
       description: TOOL_SPECS.getProfile.description,
@@ -181,6 +182,49 @@ export function createTools(host: PipelineHost) {
             note: "Nothing was changed. Ask the user which column of this file to use for each missing column, or whether to remove it, then call loadPipeline again with columnMapping."
           };
         return result;
+      }
+    }),
+
+    rememberPreference: tool({
+      description: TOOL_SPECS.rememberPreference.description,
+      inputSchema: toolSchema(TOOL_SPECS.rememberPreference.inputSchema),
+      // Saved preferences go into every later chat, so the user confirms each one.
+      // Without this, text in an uploaded file could talk the model into saving an instruction.
+      needsApproval: true,
+      execute: async ({ preference }) => {
+        const text = preferenceTextSchema.safeParse(preference);
+        if (!text.success)
+          return {
+            error: text.error.issues[0]?.message ?? "Invalid preference."
+          };
+        const saved = host.addPreference(text.data);
+        if ("error" in saved) return saved;
+        return { saved: true, preference: saved.text };
+      }
+    }),
+
+    forgetPreference: tool({
+      description: TOOL_SPECS.forgetPreference.description,
+      inputSchema: toolSchema(TOOL_SPECS.forgetPreference.inputSchema),
+      execute: async ({ preference }) => {
+        const saved = host.preferences();
+        const wanted = preference.trim().toLowerCase();
+        const exact = saved.filter((p) => p.text.toLowerCase() === wanted);
+        const partial = saved.filter((p) =>
+          p.text.toLowerCase().includes(wanted)
+        );
+        const matches = exact.length > 0 ? exact : wanted ? partial : [];
+        if (matches.length === 1) {
+          host.removePreference(matches[0].id);
+          return { forgotten: matches[0].text };
+        }
+        const list = saved.map((p) => `"${p.text}"`).join(", ") || "none";
+        return {
+          error:
+            matches.length === 0
+              ? `No saved preference matches "${preference}". Saved: ${list}.`
+              : `More than one saved preference matches "${preference}". Give its full text. Saved: ${list}.`
+        };
       }
     }),
 

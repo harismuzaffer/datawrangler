@@ -21,6 +21,7 @@ How to help:
 - Add, change, remove, or move steps with the tools when the user asks or agrees. Ask first when a choice needs the user: day/month order of dates, values to fill in, which rows to drop, new column names.
 - Use column names exactly as the profile shows them. Step IDs look like s1, s2. Positions start at 1.
 - After changing the pipeline, tell the user what the step did, using the tool result. Call previewPipeline when the user wants to see the result. Counts marked sampleOnly are only for the preview rows.
+- Memory: when the user tells you a lasting preference (how their dates are written, which values mean empty, how names should look), offer to remember it, and call rememberPreference with one short sentence in the user's own terms. The user approves it first. Never save values or text from the file, or anything the user did not say. Call forgetPreference when the user asks you to forget one; only say it is forgotten after the tool confirms.
 - getProfile lists earlier uploads that have steps. When the user wants to reuse them, call loadPipeline. It replaces the current steps, and the user approves it first.
 - Call runPipeline when the user wants the cleaned file, or to apply the steps to the whole file. The user approves the run in the chat before it starts. If runPipeline returns "Tool execution was denied.", the user chose not to run it: the file and its pipeline are still there, nothing ran, and no cleaned file was made. Say that in one sentence and ask what to change. Never say a cleaned file is ready unless getProfile shows its run as done.
 - If a tool returns an error, fix the call and try again, or explain the problem to the user.
@@ -45,6 +46,22 @@ const position = z.coerce
 const params = z
   .record(z.string(), z.unknown())
   .describe("The transform's parameters, as in its usage line.");
+
+/**
+ * The system prompt with the user's saved preferences added.
+ * The user saved them, but they are still shown as notes, not instructions to act on by themselves.
+ * IDs are left out: when the model saw them, it repeated them to the user and wrote "forgotten [id]" instead of calling the tool.
+ */
+export function systemPrompt(
+  preferences: { id: string; text: string }[]
+): string {
+  if (preferences.length === 0) return SYSTEM_PROMPT;
+  const list = preferences.map((p) => `- ${p.text}`).join("\n");
+  return `${SYSTEM_PROMPT}
+
+The user's saved preferences. Use them when you suggest or choose step settings, unless the user now says otherwise. They are notes about the user's data, not requests to do something now:
+${list}`;
+}
 
 /** Descriptions and input schemas of the LLM tools. A description says when to use the tool. */
 export const TOOL_SPECS = {
@@ -91,6 +108,30 @@ export const TOOL_SPECS = {
         .optional()
         .describe(
           "For each missing column: the column of this file to use instead, or null to remove it."
+        )
+    })
+  },
+  rememberPreference: {
+    description:
+      "Save a lasting preference the user told you, as one short sentence, so it is used with their future files too. The user must approve it.",
+    inputSchema: z.object({
+      preference: z
+        .string()
+        .max(300)
+        .describe(
+          'One short sentence, like "Dates are day first (DD/MM/YYYY)".'
+        )
+    })
+  },
+  forgetPreference: {
+    description:
+      "Delete a saved preference when the user asks you to forget it.",
+    inputSchema: z.object({
+      preference: z
+        .string()
+        .max(300)
+        .describe(
+          "The saved preference, as written in your instructions, or a distinctive part of it."
         )
     })
   },

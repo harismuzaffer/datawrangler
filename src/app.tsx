@@ -10,6 +10,7 @@ import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { getToolName, isToolUIPart, type UIMessage } from "ai";
 import { MAX_CSV_BYTES } from "./limits";
+import { MemoryPanel, type MemoryApi } from "./memory-panel";
 import { PipelinePanel, type PipelineApi } from "./pipeline-panel";
 import { ProfilePanel } from "./profile-panel";
 import type { AgentState, CobblerAgent } from "./server";
@@ -115,7 +116,8 @@ const APPROVAL_TITLES: Record<string, string> = {
   runPipeline:
     "Run the pipeline on the whole file and make a cleaned copy? Your original file is kept.",
   loadPipeline:
-    "Replace the current steps with the steps from an earlier upload?"
+    "Replace the current steps with the steps from an earlier upload?",
+  rememberPreference: "Remember this for all your files?"
 };
 
 function ToolPartView({
@@ -270,6 +272,7 @@ function Chat() {
   const [connected, setConnected] = useState(false);
   const [input, setInput] = useState("");
   const [showDebug, setShowDebug] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -302,12 +305,20 @@ function Chat() {
 
   const isStreaming = status === "streaming" || status === "submitted";
   const latestDataset = agent.state?.datasets[0];
+  const preferences = agent.state?.preferences ?? [];
 
   // The agent object changes on every render; keep the loaders stable so they are not refetched each time.
   const agentRef = useRef(agent);
   agentRef.current = agent;
   const loadProfile = useCallback(
     (datasetId: string) => agentRef.current.stub.getProfile(datasetId),
+    []
+  );
+  const memoryApi = useMemo<MemoryApi>(
+    () => ({
+      savePreference: (text) => agentRef.current.stub.savePreference(text),
+      deletePreference: (id) => agentRef.current.stub.deletePreference(id)
+    }),
     []
   );
   const pipelineApi = useMemo<PipelineApi>(
@@ -452,6 +463,15 @@ function Chat() {
             <ThemeToggle />
             <Button
               variant="secondary"
+              icon={<BrainIcon size={16} />}
+              aria-pressed={showMemory}
+              onClick={() => setShowMemory(!showMemory)}
+            >
+              Memory
+              {preferences.length > 0 ? ` (${preferences.length})` : ""}
+            </Button>
+            <Button
+              variant="secondary"
               icon={<TrashIcon size={16} />}
               onClick={clearHistory}
             >
@@ -461,18 +481,23 @@ function Chat() {
         </div>
       </header>
 
-      {latestDataset && (
+      {(latestDataset || showMemory) && (
         // Capped, so the chat always keeps at least half the window.
         <div className="px-5 pt-4 max-h-[50vh] overflow-y-auto shrink-0">
           <div className="max-w-3xl mx-auto space-y-3 pb-1">
-            <ProfilePanel
-              dataset={latestDataset}
-              loadProfile={loadProfile}
-              downloadUrl={(runId) =>
-                `/agents/cobbler-agent/${encodeURIComponent(userId)}/download?run=${encodeURIComponent(runId)}`
-              }
-            />
-            {latestDataset.status === "ready" && (
+            {showMemory && (
+              <MemoryPanel preferences={preferences} api={memoryApi} />
+            )}
+            {latestDataset && (
+              <ProfilePanel
+                dataset={latestDataset}
+                loadProfile={loadProfile}
+                downloadUrl={(runId) =>
+                  `/agents/cobbler-agent/${encodeURIComponent(userId)}/download?run=${encodeURIComponent(runId)}`
+                }
+              />
+            )}
+            {latestDataset?.status === "ready" && (
               <PipelinePanel dataset={latestDataset} api={pipelineApi} />
             )}
           </div>

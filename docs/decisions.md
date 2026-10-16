@@ -48,10 +48,10 @@ Left out of v1: regex (a bad pattern can lock the CPU), formulas or computed col
 
 ## LLM tools
 
-About 9 tools, grouped by action on the pipeline, not one per transform.
+Ten tools, grouped by action, not one per transform.
 Reason: every tool definition goes into each prompt, and open models choose tools worse when the list is long or the schemas are large.
 
-Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `previewPipeline`, `runPipeline`, `loadPipeline`. Later: `rememberPreference`.
+Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `previewPipeline`, `runPipeline`, `loadPipeline`, `rememberPreference`, `forgetPreference`.
 
 - `addStep` takes `{ op, params, position? }`. `op` is an enum of transform names. The system prompt holds a one-line catalog of the transforms, built from each transform's usage text.
 - The server validates `params` with the zod schema for that `op`. On failure, it returns the exact error and the usage line so the LLM can retry. Errors are returned as tool results, not thrown, so the model sees them.
@@ -64,6 +64,15 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **A rejected run reaches the model as "Tool execution was denied."** The prompt says what that means. Without that line, Mistral claimed the cleaned file was ready, or that no file was uploaded: the agent prunes older tool results from the history, so the model no longer saw the profile. With it, 4 of 4 rejected runs got a truthful reply (checked 2026-10-16).
 - **`loadPipeline` reuses steps from an earlier upload,** found by file name (`getProfile` lists earlier uploads with steps). It replaces the current steps, so the call that would save needs the user's approval. A call that only reports missing columns, or a wrong name, changes nothing and needs no approval, so the user is not asked twice.
 - Export, import, and download are UI buttons only.
+
+## Memory
+
+- **Memory is a short list of the user's preferences,** one sentence each (3 to 300 characters, no line breaks), at most 30. They live in the agent's `preferences` table and in synced state, so the Memory panel shows them live.
+- **Every chat request gets them,** added to the end of the system prompt as notes about the user's data, not as requests to act.
+- **The model needs approval to save one** (`rememberPreference`). A preference reaches every later chat, so text in an uploaded file must not be able to talk the model into saving an instruction. The user can also type one in the Memory panel, which needs no approval, and delete any.
+- **`forgetPreference` takes the preference's text** (or a unique part of it), not an ID. With IDs in the prompt, Mistral repeated them to the user, and in longer chats wrote "forgotten [id]" without calling the tool.
+- **Tool history.** Old results of the large tools (`getProfile`, `previewPipeline`, the step edits) are pruned from the history to save tokens. The small tools that act (memory, run, reuse) are kept. When they were pruned too, the model saw its old "I saved it" replies without the tool calls beside them, copied them, and stopped calling tools: forget failed in 3 of 3 longer browser chats. With them kept, 3 of 3 worked.
+- **Checked** on 2026-10-16 (Mistral Small 3.1): remember asked for approval 5 of 5; forget really deleted 5 of 5; with a "dates are day first" preference, a file of ambiguous dates got a day-first `parseDate` step 5 of 5, and without it the agent asked 5 of 5. The 45-chat set from the model choice still passed 45 of 45.
 
 ## Pipeline files and reuse
 
@@ -168,6 +177,8 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **CPU time on the free plan.** Parsing and profiling cost about 1 s of CPU for a 5 MB file (measured in Node: 1.3 s for 7 MB, 90,000 rows). Workers Free allows 10 ms of CPU per request and per workflow step, so large files will fail when deployed on the free plan. `npm run dev` does not enforce the limit. Workers Paid allows 30 s by default. Options if this matters: the paid plan, or a much smaller upload limit on free.
 - **Free daily allowance.** The free plan includes 10,000 Workers AI neurons a day; a busy test session can use them up, and then every chat reply fails with error 4006 until 00:00 UTC.
 - **Stale build in `wrangler dev`.** After `npm run build`, `.wrangler/deploy/config.json` makes plain `wrangler dev` run the built `dist/` copy, not `src/`, and it does not reload on edits. Use `npm run dev`, or `wrangler dev -c wrangler.jsonc`.
+- **Chat errors** are logged on the server (`Chat stream error:`); the browser only sees a generic message.
+- **The model may add more steps than asked.** Asked only to fix dates, Mistral sometimes added fixes for every issue in the profile, once including `dropRowsWhereEmpty` with `mode: any`, which drops rows that have any empty cell. Every step shows in the panel and can be removed before a run.
 - **Dev costs.** The AI binding uses `"remote": true`, so `npm run dev` calls real Workers AI and uses account quota.
 
 ## Open questions

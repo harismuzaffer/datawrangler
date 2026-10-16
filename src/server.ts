@@ -20,11 +20,17 @@ import type { DatasetProfile } from "./profile";
 import type { ProfileParams } from "./profile-workflow";
 import type { RunParams } from "./run-workflow";
 import {
+  MAX_PREFERENCES,
+  preferenceTextSchema,
+  type MemoryHost,
+  type Preference
+} from "./memory";
+import {
   exportPipeline,
   parsePipelineFile,
   PipelineFileError
 } from "./pipeline-file";
-import { SYSTEM_PROMPT } from "./prompts";
+import { systemPrompt } from "./prompts";
 import { z } from "zod";
 import { tableFromRecords, type Table } from "./table";
 import {
@@ -84,6 +90,8 @@ export interface DatasetSummary {
 /** Agent state, synced to every connected browser. */
 export interface AgentState {
   datasets: DatasetSummary[];
+  /** The user's saved preferences (memory), oldest first. */
+  preferences: Preference[];
 }
 
 type DatasetRow = {
@@ -150,9 +158,9 @@ function countIssues(profile: DatasetProfile): number {
 /** One chat agent per user. Chat history and datasets persist in the agent's SQLite storage. */
 export class CobblerAgent
   extends AIChatAgent<Env, AgentState>
-  implements PipelineHost
+  implements PipelineHost, MemoryHost
 {
-  initialState: AgentState = { datasets: [] };
+  initialState: AgentState = { datasets: [], preferences: [] };
   /** Preview samples by dataset ID. Files never change after upload, so a sample stays valid while the agent is awake. */
   private samples = new Map<string, { table: Table; partial: boolean }>();
   maxPersistedMessages = 100;
@@ -196,6 +204,13 @@ export class CobblerAgent
       finished_at integer,
       unique (dataset_id, version)
     )`;
+    this.sql`create table if not exists preferences (
+      id text primary key,
+      text text not null,
+      created_at integer not null
+    )`;
+    // Agents created before preferences existed have state without them.
+    if (!this.state.preferences) this.syncState();
   }
 
   async onRequest(request: Request): Promise<Response> {
@@ -419,7 +434,7 @@ export class CobblerAgent
         pipelineUpdatedAt: row.pipeline_updated_at
       };
     });
-    this.setState({ ...this.state, datasets });
+    this.setState({ ...this.state, datasets, preferences: this.preferences() });
   }
 
   latestDataset(): DatasetInfo | null {
@@ -438,6 +453,62 @@ export class CobblerAgent
       name: row.name,
       steps: JSON.parse(row.steps) as Pipeline["steps"]
     }));
+  }
+
+  preferences(): Preference[] {
+    return this.sql<{ id: string; text: string; created_at: number }>`
+      select id, text, created_at from preferences order by created_at, id`.map(
+      (row) => ({ id: row.id, text: row.text, createdAt: row.created_at })
+    );
+  }
+
+  addPreference(text: string): Preference | { error: string } {
+    const saved = this.preferences();
+    const same = saved.find((p) => p.text.toLowerCase() === text.toLowerCase());
+    if (same) return same;
+    if (saved.length >= MAX_PREFERENCES)
+      return {
+        error: `You can keep up to ${MAX_PREFERENCES} preferences. Remove one first.`
+      };
+    // Short IDs, because the LLM reads and repeats them.
+    const preference = {
+      id: `p${crypto.randomUUID().slice(0, 8)}`,
+      text,
+      createdAt: Date.now()
+    };
+    this
+      .sql`insert into preferences (id, text, created_at) values (${preference.id}, ${text}, ${preference.createdAt})`;
+    this.syncState();
+    return preference;
+  }
+
+  removePreference(id: string): boolean {
+    const [found] = this.sql<{
+      id: string;
+    }>`select id from preferences where id = ${id}`;
+    if (!found) return false;
+    this.sql`delete from preferences where id = ${id}`;
+    this.syncState();
+    return true;
+  }
+
+  /** Saves a preference the user typed in the Memory panel. Typed by the user, so no approval is needed. */
+  @callable()
+  savePreference(text: unknown) {
+    const parsed = preferenceTextSchema.safeParse(text);
+    if (!parsed.success)
+      return {
+        error: parsed.error.issues[0]?.message ?? "Invalid preference."
+      };
+    return this.addPreference(parsed.data);
+  }
+
+  /** Deletes a preference from the Memory panel. */
+  @callable()
+  deletePreference(id: unknown) {
+    if (typeof id !== "string" || id.length > 40)
+      return { error: "Invalid request." };
+    return { deleted: this.removePreference(id) };
   }
 
   dataset(id: string): DatasetInfo | null {
@@ -592,11 +663,24 @@ export class CobblerAgent
       model: workersai("@cf/mistralai/mistral-small-3.1-24b-instruct", {
         sessionAffinity: this.sessionAffinity
       }),
-      system: SYSTEM_PROMPT,
-      // Prune old tool calls and reasoning to save tokens on long conversations
+      system: systemPrompt(this.preferences()),
+      // Old results of the large tools are pruned to save tokens. The small tools that act (memory, run, reuse) stay:
+      // when the model saw "I saved it" in the history without the tool call beside it, it copied that and stopped calling tools.
       messages: pruneMessages({
         messages: await convertToModelMessages(this.messages),
-        toolCalls: "before-last-2-messages",
+        toolCalls: [
+          {
+            type: "before-last-2-messages",
+            tools: [
+              "getProfile",
+              "previewPipeline",
+              "addStep",
+              "updateStep",
+              "removeStep",
+              "moveStep"
+            ]
+          }
+        ],
         reasoning: "before-last-message"
       }),
       tools: createTools(this),
@@ -604,7 +688,13 @@ export class CobblerAgent
       abortSignal: options?.abortSignal
     });
 
-    return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse({
+      // The browser gets a generic message; the real cause goes to the log.
+      onError: (error) => {
+        console.error("Chat stream error:", error);
+        return "Something went wrong. Please try again.";
+      }
+    });
   }
 }
 
