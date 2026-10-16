@@ -91,6 +91,18 @@ type RunRow = {
 
 const runIdSchema = z.uuid();
 
+function runSummary(run: RunRow): RunSummary {
+  const report = run.report ? (JSON.parse(run.report) as RunReport) : null;
+  return {
+    id: run.id,
+    version: run.version,
+    status: run.status,
+    error: run.error,
+    rowCount: report?.rowCount ?? null,
+    columnCount: report?.columnCount ?? null
+  };
+}
+
 function countIssues(profile: DatasetProfile): number {
   return (
     profile.issues.length +
@@ -346,17 +358,9 @@ export class CobblerAgent
     const latestRuns = new Map<string, RunSummary>();
     // Newest first, so the first run seen for a dataset is its latest.
     for (const run of this
-      .sql<RunRow>`select id, dataset_id, version, status, report, error from runs order by version desc`) {
-      if (latestRuns.has(run.dataset_id)) continue;
-      const report = run.report ? (JSON.parse(run.report) as RunReport) : null;
-      latestRuns.set(run.dataset_id, {
-        id: run.id,
-        version: run.version,
-        status: run.status,
-        error: run.error,
-        rowCount: report?.rowCount ?? null,
-        columnCount: report?.columnCount ?? null
-      });
+      .sql<RunRow>`select * from runs order by version desc`) {
+      if (!latestRuns.has(run.dataset_id))
+        latestRuns.set(run.dataset_id, runSummary(run));
     }
     const datasets = rows.map((row): DatasetSummary => {
       const profile = row.profile
@@ -392,6 +396,12 @@ export class CobblerAgent
       error: row.error,
       profile
     };
+  }
+
+  latestRun(datasetId: string): RunSummary | null {
+    const [run] = this
+      .sql<RunRow>`select * from runs where dataset_id = ${datasetId} order by version desc limit 1`;
+    return run ? runSummary(run) : null;
   }
 
   loadPipeline(datasetId: string): Pipeline {

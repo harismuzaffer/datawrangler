@@ -51,7 +51,7 @@ Left out of v1: regex (a bad pattern can lock the CPU), formulas or computed col
 About 9 tools, grouped by action on the pipeline, not one per transform.
 Reason: every tool definition goes into each prompt, and open models choose tools worse when the list is long or the schemas are large.
 
-Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `previewPipeline`. Later: `runPipeline` (needs user confirmation), `loadPipeline`, `rememberPreference`.
+Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `previewPipeline`, `runPipeline`. Later: `loadPipeline`, `rememberPreference`.
 
 - `addStep` takes `{ op, params, position? }`. `op` is an enum of transform names. The system prompt holds a one-line catalog of the transforms, built from each transform's usage text.
 - The server validates `params` with the zod schema for that `op`. On failure, it returns the exact error and the usage line so the LLM can retry. Errors are returned as tool results, not thrown, so the model sees them.
@@ -60,6 +60,8 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **Lenient input where models often slip:** `columns` may be a single name instead of a list, and `position` may be a numeric string. `params` must be an object.
 - **Parallel tool calls are safe.** The model may call `addStep` several times at once. Each edit loads, changes, and saves the pipeline with no `await` in between, so edits cannot overwrite each other.
 - Prompts and tool specs live in `src/prompts.ts`; tool logic lives in `src/tools.ts` behind a small `ToolHost` interface, so it is tested without a Durable Object.
+- **`runPipeline` needs the user's approval** (the AI SDK's `needsApproval`). The chat shows a card with Approve and Reject buttons; the run starts only after Approve. Before it starts, the tool runs the pipeline on the preview rows and refuses if a step fails there. The tool returns at once; the run's progress and the download link appear in the panel, and `getProfile` reports the latest run so the LLM can answer "is it done?".
+- **A rejected run reaches the model as "Tool execution was denied."** The prompt says what that means. Without that line, Mistral claimed the cleaned file was ready, or that no file was uploaded: the agent prunes older tool results from the history, so the model no longer saw the profile. With it, 4 of 4 rejected runs got a truthful reply (checked 2026-10-16).
 - Export, import, and download are UI buttons only.
 
 ## Full runs and download

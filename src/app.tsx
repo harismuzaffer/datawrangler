@@ -102,6 +102,12 @@ function ToolIO({ label, value }: { label: string; value: unknown }) {
   );
 }
 
+/** Plain questions for tools that need the user's approval. */
+const APPROVAL_TITLES: Record<string, string> = {
+  runPipeline:
+    "Run the pipeline on the whole file and make a cleaned copy? Your original file is kept."
+};
+
 function ToolPartView({
   part,
   addToolApprovalResponse
@@ -143,14 +149,16 @@ function ToolPartView({
           <div className="flex items-center gap-2 mb-2">
             <GearIcon size={14} className="text-kumo-warning" />
             <Text size="sm" bold>
-              Approval needed: {toolName}
+              {APPROVAL_TITLES[toolName] ?? `Approval needed: ${toolName}`}
             </Text>
           </div>
-          <div className="font-mono mb-3">
-            <Text size="xs" variant="secondary">
-              {JSON.stringify(part.input, null, 2)}
-            </Text>
-          </div>
+          {Object.keys(part.input ?? {}).length > 0 && (
+            <div className="font-mono mb-3">
+              <Text size="xs" variant="secondary">
+                {JSON.stringify(part.input, null, 2)}
+              </Text>
+            </div>
+          )}
           <div className="flex gap-2">
             <Button
               variant="primary"
@@ -430,7 +438,13 @@ function Chat() {
       {latestDataset && (
         <div className="px-5 pt-4">
           <div className="max-w-3xl mx-auto">
-            <ProfilePanel dataset={latestDataset} loadProfile={loadProfile} />
+            <ProfilePanel
+              dataset={latestDataset}
+              loadProfile={loadProfile}
+              downloadUrl={(runId) =>
+                `/agents/cobbler-agent/${encodeURIComponent(userId)}/download?run=${encodeURIComponent(runId)}`
+              }
+            />
           </div>
         </div>
       )}

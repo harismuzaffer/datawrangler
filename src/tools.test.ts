@@ -5,6 +5,7 @@ import { emptyPipeline, safePipeline, type Pipeline } from "./pipeline";
 import { profileCsv, type DatasetProfile } from "./profile";
 import { TOOL_SPECS } from "./prompts";
 import { tableFromRecords } from "./table";
+import type { RunSummary } from "./server";
 import { createTools, type ToolHost } from "./tools";
 
 const CSV = "name,city,amount\n Ann ,Paris,$1\nBob,paris,2\n,,\n";
@@ -19,6 +20,7 @@ function fakeHost(
       : options.profile;
   let saved: Pipeline = profile ? safePipeline(profile) : emptyPipeline();
   let saves = 0;
+  const runs: RunSummary[] = [];
   const host: ToolHost = {
     latestDataset: () => ({
       id: "d1",
@@ -36,9 +38,22 @@ function fakeHost(
     loadSample: async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       return { table: tableFromRecords(records), partial: false };
-    }
+    },
+    startRun: async () => {
+      const version = runs.length + 1;
+      runs.push({
+        id: `r${version}`,
+        version,
+        status: "running",
+        error: null,
+        rowCount: null,
+        columnCount: null
+      });
+      return { runId: `r${version}`, version };
+    },
+    latestRun: () => runs.at(-1) ?? null
   };
-  return { host, pipeline: () => saved, saves: () => saves };
+  return { host, pipeline: () => saved, saves: () => saves, runs };
 }
 
 type Tools = ReturnType<typeof createTools>;
@@ -208,6 +223,43 @@ describe("pipeline tools", () => {
     expect(
       (await call(tools, "previewPipeline", { upToStepId: "s7" })).error
     ).toMatch(/no step/);
+  });
+});
+
+describe("runPipeline", () => {
+  it("needs the user's approval", () => {
+    expect(createTools(fakeHost().host).runPipeline.needsApproval).toBe(true);
+  });
+
+  it("starts a run and shows it in getProfile", async () => {
+    const fake = fakeHost();
+    const tools = createTools(fake.host);
+    expect(await call(tools, "runPipeline", {})).toMatchObject({
+      started: true,
+      version: 1
+    });
+    expect(await call(tools, "getProfile", {})).toMatchObject({
+      latestRun: { version: 1, status: "running" }
+    });
+  });
+
+  it("does not start when a step fails on the preview rows", async () => {
+    const fake = fakeHost();
+    const tools = createTools(fake.host);
+    await call(tools, "addStep", {
+      op: "renameColumn",
+      params: { column: "city", to: "town" }
+    });
+    await call(tools, "addStep", {
+      op: "changeCase",
+      params: { columns: ["town"], case: "upper" }
+    });
+    // Removing the rename is saved, with a warning, and leaves s4 pointing at a missing column.
+    await call(tools, "removeStep", { stepId: "s3" });
+    expect(await call(tools, "runPipeline", {})).toMatchObject({
+      error: expect.stringMatching(/did not start\. Step s4 fails/)
+    });
+    expect(fake.runs).toEqual([]);
   });
 });
 

@@ -49,8 +49,8 @@ One line per file or module. Keep this list current.
 - `src/table.ts`: the `Table` the pipeline works on (unique column names, padded rows) and number helpers.
 - `src/transforms/`: one file per transform group (`text`, `values`, `rows`, `columns`, `math`, `window`). `core.ts` has the step context that looks up columns and records changes; `index.ts` is the registry of all transforms.
 - `src/pipeline.ts`: pipeline model: validate, add, update, remove, and move steps; run steps on a table; run the whole pipeline for a full run; build a preview; pick the safe steps for a profile.
-- `src/app.tsx`: chat UI: per-browser user ID, CSV upload (button and drag and drop), profile panel, messages.
-- `src/profile-panel.tsx`: shows the latest upload's status, file issues, and a table of columns with types, counts, and issues.
+- `src/app.tsx`: chat UI: per-browser user ID, CSV upload (button and drag and drop), profile panel, messages, tool approval cards.
+- `src/profile-panel.tsx`: shows the latest upload's status, file issues, a table of columns with types, counts, and issues, and its latest run with a download button.
 - `src/limits.ts`: upload size and column limits, shared by the Worker and the browser (kept apart so the browser does not bundle the parser).
 - `vitest.config.ts`: unit test config. Tests sit next to the code as `*.test.ts` and run in Node.
 - `wrangler.jsonc`: bindings and Worker config.
@@ -61,7 +61,7 @@ A few steps per flow, once it exists.
 
 - **Upload and profile:** browser (user ID from local storage) `POST /agents/cobbler-agent/{userId}/upload?name=…` -> `CobblerAgent.onRequest` checks size and type -> R2 `{userId}/{datasetId}/v0.csv` -> `datasets` row with status `profiling` -> `ProfileWorkflow` (instance ID = dataset ID) -> `onWorkflowComplete` stores the profile, or `onWorkflowError` stores the error -> state sync tells the browser -> the panel fetches the full profile with the `getProfile` callable.
 - **Pipeline edit (tool call):** `addStep` / `updateStep` / `removeStep` / `moveStep` -> load the preview sample (cached, or first 512 KB from R2) -> apply the edit to the stored pipeline -> run all steps on the sample -> refuse if the edited step fails, else save to `pipelines` -> return each step's summary to the LLM.
-- **Full run:** `startRun` checks the dataset is ready and no run is in progress -> `runs` row (next version, status `running`, a copy of the steps) -> `RunWorkflow` (instance ID = run ID) reads `v0.csv`, runs every step, writes `{userId}/{datasetId}/v{n}.csv` -> `onWorkflowComplete` stores the report, or `onWorkflowError` stores the error -> state sync shows the latest run per dataset.
+- **Full run:** the LLM calls `runPipeline` -> the user approves in the chat -> the tool checks the steps on the preview rows -> `startRun` checks the dataset is ready and no run is in progress -> `runs` row (next version, status `running`, a copy of the steps) -> `RunWorkflow` (instance ID = run ID) reads `v0.csv`, runs every step, writes `{userId}/{datasetId}/v{n}.csv` -> `onWorkflowComplete` stores the report, or `onWorkflowError` stores the error -> state sync shows the latest run per dataset.
 - **Download:** browser `GET /agents/cobbler-agent/{userId}/download?run={runId}` -> `CobblerAgent.onRequest` finds a finished run -> streams the file from R2 as an attachment named like `sales-cleaned-v2.csv`.
 - **Profile ready:** `onWorkflowComplete` also creates the dataset's pipeline with the safe steps the profile calls for.
 - **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.

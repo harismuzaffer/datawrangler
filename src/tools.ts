@@ -13,6 +13,7 @@ import {
 import type { DatasetProfile } from "./profile";
 import { profileForLlm } from "./profile-summary";
 import { TOOL_SPECS } from "./prompts";
+import type { RunSummary } from "./server";
 import type { Table } from "./table";
 
 /** What the tools need from the agent. Kept small so the tools can be tested without a Durable Object. */
@@ -32,6 +33,11 @@ export interface ToolHost {
     datasetId: string,
     profile: DatasetProfile
   ): Promise<{ table: Table; partial: boolean }>;
+  /** Starts a full run of the dataset's pipeline in a workflow, or explains why it cannot start. */
+  startRun(
+    datasetId: string
+  ): Promise<{ runId: string; version: number } | { error: string }>;
+  latestRun(datasetId: string): RunSummary | null;
 }
 
 const DATA_NOTE =
@@ -146,6 +152,7 @@ export function createTools(host: ToolHost) {
         const dataset = readyDataset(host);
         if ("error" in dataset) return dataset;
         const pipeline = host.loadPipeline(dataset.id);
+        const run = host.latestRun(dataset.id);
         return {
           file: dataset.name,
           note: DATA_NOTE,
@@ -155,7 +162,15 @@ export function createTools(host: ToolHost) {
             op,
             params,
             ...(auto ? { auto } : {})
-          }))
+          })),
+          latestRun: run
+            ? {
+                version: run.version,
+                status: run.status,
+                ...(run.rowCount !== null ? { rows: run.rowCount } : {}),
+                ...(run.error ? { error: run.error } : {})
+              }
+            : "No run yet, so there is no cleaned file."
         };
       }
     }),
@@ -197,6 +212,36 @@ export function createTools(host: ToolHost) {
           pipeline: moveStep(pipeline, stepId, position),
           checkStepId: stepId
         }))
+    }),
+
+    runPipeline: tool({
+      description: TOOL_SPECS.runPipeline.description,
+      inputSchema: toolSchema(TOOL_SPECS.runPipeline.inputSchema),
+      // A run makes a new file from the user's data, so the user confirms it first.
+      needsApproval: true,
+      execute: async () => {
+        const dataset = readyDataset(host);
+        if ("error" in dataset) return dataset;
+        // A step that fails on the preview rows would fail the run too; say so now instead of after the run.
+        const sample = await host.loadSample(dataset.id, dataset.profile);
+        const preview = buildPreview(
+          sample.table,
+          host.loadPipeline(dataset.id).steps,
+          { partial: sample.partial }
+        );
+        const failing = preview.steps.find((s) => s.status === "error");
+        if (failing)
+          return {
+            error: `The run did not start. Step ${failing.id} fails: ${failing.summary}`
+          };
+        const started = await host.startRun(dataset.id);
+        if ("error" in started) return started;
+        return {
+          started: true,
+          version: started.version,
+          note: "The run is in progress. When it finishes, a download link appears in the panel above the chat."
+        };
+      }
     }),
 
     previewPipeline: tool({

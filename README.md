@@ -4,7 +4,7 @@ A chat agent that cleans and reshapes messy CSV files. You upload a CSV and chat
 
 Built on Cloudflare: [Agents SDK](https://developers.cloudflare.com/agents/) (`AIChatAgent`), [Workers AI](https://developers.cloudflare.com/workers-ai/), [Workflows](https://developers.cloudflare.com/workflows/), Durable Objects, and R2.
 
-> **Status:** early. The chat agent runs. CSV upload, profiling, and pipeline editing work: upload a file, see its columns, types, and issues, and ask the agent to add, change, reorder, or preview cleaning steps. Running a pipeline on the whole file and downloading the result are not built yet. Pipelines and cleaning are not built yet. See [docs/progress.md](docs/progress.md).
+> **Status:** early. Upload a CSV, see its columns, types, and issues, and ask the agent to add, change, reorder, or preview cleaning steps. Ask for the cleaned file, approve the run in the chat, and download the result from the panel. A pipeline panel, pipeline export and import, and memory are not built yet. See [docs/progress.md](docs/progress.md).
 
 ## Architecture
 
@@ -16,15 +16,15 @@ Worker entry ───────────────────► R2 (CS
    │                                  ▲
    ▼                                  │
 CobblerAgent (Durable Object, SQLite) │
-   │  ▲  start / progress             │
-   │  └──────────────── CleaningWorkflow (Workflows)
+   │  ▲  start / result               │
+   │  └──── ProfileWorkflow, RunWorkflow (Workflows)
    ▼
 Workers AI (LLM)
 ```
 
 - **CobblerAgent:** one per user. Holds chat history, datasets, pipelines, and user preferences. Calls the LLM.
 - **Workers AI:** reads a summary of the data, explains problems, and builds pipeline steps from a fixed set of transforms. It never runs code.
-- **CleaningWorkflow:** parses files and runs pipelines on the full file, with durable, retryable steps.
+- **ProfileWorkflow and RunWorkflow:** profile an uploaded file, and run a pipeline on the whole file, with durable, retryable steps.
 - **R2:** stores the raw and cleaned CSV files. Each version is kept, so you can go back.
 
 Details and reasons: [docs/decisions.md](docs/decisions.md).

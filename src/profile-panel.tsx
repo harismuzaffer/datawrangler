@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
-import { Badge, Surface, Text } from "@cloudflare/kumo";
+import { Badge, LinkButton, Surface, Text } from "@cloudflare/kumo";
 import {
   CaretDownIcon,
   CircleNotchIcon,
+  DownloadSimpleIcon,
   FileCsvIcon,
   WarningIcon
 } from "@phosphor-icons/react";
 import type { ColumnProfile, DatasetProfile, Issue } from "./profile";
-import type { DatasetSummary } from "./server";
+import type { DatasetSummary, RunSummary } from "./server";
 
 function formatSize(bytes: number): string {
   return bytes < 1024 * 1024
@@ -67,13 +68,66 @@ function ColumnRow({ column }: { column: ColumnProfile }) {
   );
 }
 
-/** Shows the latest upload: its status while it is read, then its columns, types, and detected issues. */
+/** The latest full run: in progress, failed with a reason, or done with a download link. */
+function RunLine({
+  run,
+  downloadUrl
+}: {
+  run: RunSummary;
+  downloadUrl: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-4 py-2.5 border-t border-kumo-line">
+      {run.status === "running" && (
+        <>
+          <CircleNotchIcon
+            size={14}
+            className="text-kumo-inactive animate-spin"
+          />
+          <Text size="xs" variant="secondary">
+            Cleaning the whole file (version {run.version})…
+          </Text>
+        </>
+      )}
+      {run.status === "failed" && (
+        <>
+          <WarningIcon size={14} className="text-kumo-danger shrink-0" />
+          <Text size="xs" variant="secondary">
+            The run failed: {run.error}
+          </Text>
+        </>
+      )}
+      {run.status === "done" && (
+        <>
+          <Text size="xs" variant="secondary">
+            Cleaned file version {run.version} is ready: {run.rowCount} rows ·{" "}
+            {run.columnCount} columns
+          </Text>
+          <LinkButton
+            href={downloadUrl}
+            download
+            size="sm"
+            variant="primary"
+            icon={<DownloadSimpleIcon size={14} />}
+            className="ml-auto"
+          >
+            Download CSV
+          </LinkButton>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Shows the latest upload: its status while it is read, then its columns, types, and detected issues, and its latest run. */
 export function ProfilePanel({
   dataset,
-  loadProfile
+  loadProfile,
+  downloadUrl
 }: {
   dataset: DatasetSummary;
   loadProfile: (datasetId: string) => Promise<DatasetProfile | null>;
+  downloadUrl: (runId: string) => string;
 }) {
   const [profile, setProfile] = useState<DatasetProfile | null>(null);
   const [open, setOpen] = useState(true);
@@ -174,6 +228,13 @@ export function ProfilePanel({
             </tbody>
           </table>
         </div>
+      )}
+
+      {dataset.latestRun && (
+        <RunLine
+          run={dataset.latestRun}
+          downloadUrl={downloadUrl(dataset.latestRun.id)}
+        />
       )}
     </Surface>
   );
