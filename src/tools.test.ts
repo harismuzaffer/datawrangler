@@ -54,7 +54,17 @@ function fakeHost(
       });
       return { runId: `r${version}`, version };
     },
-    latestRun: () => runs.at(-1) ?? null
+    latestRun: () => runs.at(-1) ?? null,
+    earlierPipelines: () => [
+      {
+        datasetId: "d0",
+        name: "march.csv",
+        steps: [
+          { id: "s1", op: "trim", params: { columns: ["town"] } },
+          { id: "s2", op: "dedupe", params: { columns: "*" } }
+        ]
+      }
+    ]
   };
   return { host, pipeline: () => saved, saves: () => saves, runs };
 }
@@ -263,6 +273,65 @@ describe("runPipeline", () => {
       error: expect.stringMatching(/did not start\. Step s4 fails/)
     });
     expect(fake.runs).toEqual([]);
+  });
+});
+
+describe("loadPipeline", () => {
+  const approval = (tools: Tools, input: Record<string, unknown>) =>
+    (
+      tools.loadPipeline.needsApproval as (
+        input: unknown,
+        options: unknown
+      ) => boolean
+    )(input, { toolCallId: "t1", messages: [] });
+
+  it("asks about missing columns first, without approval or changes", async () => {
+    const fake = fakeHost();
+    const tools = createTools(fake.host);
+    expect(approval(tools, { fromFile: "March.csv" })).toBe(false);
+    expect(
+      await call(tools, "loadPipeline", { fromFile: "March.csv" })
+    ).toMatchObject({
+      missingColumns: ["town"],
+      columnsOfThisFile: ["name", "city", "amount"]
+    });
+    expect(fake.saves()).toBe(0);
+  });
+
+  it("needs approval once the mapping is complete, then replaces the steps", async () => {
+    const fake = fakeHost();
+    const tools = createTools(fake.host);
+    const input = { fromFile: "march.csv", columnMapping: { town: "city" } };
+    expect(approval(tools, input)).toBe(true);
+    expect(await call(tools, "loadPipeline", input)).toEqual({
+      saved: true,
+      steps: 2,
+      dropped: 0
+    });
+    expect(fake.pipeline().steps.map((s) => [s.op, s.params.columns])).toEqual([
+      ["trim", ["city"]],
+      ["dedupe", "*"]
+    ]);
+  });
+
+  it("refuses a mapping to a column this file does not have", async () => {
+    const fake = fakeHost();
+    expect(
+      await call(createTools(fake.host), "loadPipeline", {
+        fromFile: "march.csv",
+        columnMapping: { town: "village" }
+      })
+    ).toMatchObject({ error: expect.stringContaining('"village"') });
+    expect(fake.saves()).toBe(0);
+  });
+
+  it("names the earlier uploads when the name is wrong", async () => {
+    const tools = createTools(fakeHost().host);
+    expect(
+      await call(tools, "loadPipeline", { fromFile: "april.csv" })
+    ).toMatchObject({
+      error: expect.stringContaining("march.csv")
+    });
   });
 });
 

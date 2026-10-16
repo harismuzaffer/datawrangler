@@ -37,7 +37,7 @@ One line per file or module. Keep this list current.
 
 - `src/server.ts`: Worker entry and `CobblerAgent`: chat loop and LLM call, upload and download routes, `datasets`, `pipelines`, and `runs` tables, preview sample loading, starting full runs, synced state, workflow callbacks, and the callables the UI uses (profile, transform catalog, pipeline view, step edits, run).
 - `src/prompts.ts`: system prompt (with the transform catalog) and the tool descriptions and input schemas.
-- `src/pipeline-actions.ts`: pipeline edits, checks on the sample, and starting a checked run, shared by the LLM tools and the pipeline panel. They reach the agent through the `PipelineHost` interface. `pipelineEditSchema` validates edits that come from the browser.
+- `src/pipeline-actions.ts`: pipeline edits, checks on the sample, replacing a pipeline from file steps, and starting a checked run, shared by the LLM tools and the pipeline panel. They reach the agent through the `PipelineHost` interface. `pipelineEditSchema` validates edits that come from the browser.
 - `src/pipeline-file.ts`: the pipeline file format: export, parse and check an imported file, find columns a file lacks, apply the user's column mapping, and build a pipeline from file steps.
 - `src/tools.ts`: the LLM tools, built on `src/pipeline-actions.ts`. They work on the latest upload. Tool input schemas are converted with zod (see `toolSchema`), not by the AI SDK.
 - `src/upload.ts`: upload checks: body size limit while reading, binary-file check, file name and user ID schemas.
@@ -53,7 +53,7 @@ One line per file or module. Keep this list current.
 - `src/pipeline.ts`: pipeline model: validate, add, update, remove, and move steps; run steps on a table; run the whole pipeline for a full run; build a preview; pick the safe steps for a profile.
 - `src/app.tsx`: chat UI: per-browser user ID, CSV upload (button and drag and drop), profile and pipeline panels (capped at half the window), messages, tool approval cards.
 - `src/profile-panel.tsx`: shows the latest upload's status, file issues, a table of columns with types, counts, and issues, and its latest run with a download button.
-- `src/pipeline-panel.tsx`: the pipeline panel: steps with their results on the preview rows, move, remove, edit, add, preview up to a step, the result table, and Run with a confirm step.
+- `src/pipeline-panel.tsx`: the pipeline panel: steps with their results on the preview rows, move, remove, edit, add, preview up to a step, the result table, Run with a confirm step, and Export and Import with a column mapping form.
 - `src/step-form.tsx`: the add and edit form for one step, built from the transform's JSON Schema, with column pickers.
 - `src/limits.ts`: upload size and column limits, shared by the Worker and the browser (kept apart so the browser does not bundle the parser).
 - `vitest.config.ts`: unit test config. Tests sit next to the code as `*.test.ts` and run in Node.
@@ -68,5 +68,6 @@ A few steps per flow, once it exists.
 - **Full run:** the LLM calls `runPipeline` -> the user approves in the chat -> the tool checks the steps on the preview rows -> `startRun` checks the dataset is ready and no run is in progress -> `runs` row (next version, status `running`, a copy of the steps) -> `RunWorkflow` (instance ID = run ID) reads `v0.csv`, runs every step, writes `{userId}/{datasetId}/v{n}.csv` -> `onWorkflowComplete` stores the report, or `onWorkflowError` stores the error -> state sync shows the latest run per dataset.
 - **Download:** browser `GET /agents/cobbler-agent/{userId}/download?run={runId}` -> `CobblerAgent.onRequest` finds a finished run -> streams the file from R2 as an attachment named like `sales-cleaned-v2.csv`.
 - **Pipeline edit (panel):** browser -> `editPipelineStep(datasetId, edit)` callable -> zod checks the dataset ID and the edit -> the same flow as a tool edit -> the save bumps `pipelineUpdatedAt` in synced state -> every open panel reloads its view with `getPipelineView`. Chat edits reach the panel the same way.
+- **Import and reuse:** panel `importPipeline(datasetId, text, mapping?)` or the `loadPipeline` tool -> `parsePipelineFile` (import only) -> `replacePipeline` finds missing columns -> if any are unmapped, return them so the user can map or remove them -> apply the mapping, build new steps, check them on the sample -> save.
 - **Profile ready:** `onWorkflowComplete` also creates the dataset's pipeline with the safe steps the profile calls for.
 - **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.

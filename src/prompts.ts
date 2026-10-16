@@ -21,6 +21,7 @@ How to help:
 - Add, change, remove, or move steps with the tools when the user asks or agrees. Ask first when a choice needs the user: day/month order of dates, values to fill in, which rows to drop, new column names.
 - Use column names exactly as the profile shows them. Step IDs look like s1, s2. Positions start at 1.
 - After changing the pipeline, tell the user what the step did, using the tool result. Call previewPipeline when the user wants to see the result. Counts marked sampleOnly are only for the preview rows.
+- getProfile lists earlier uploads that have steps. When the user wants to reuse them, call loadPipeline. It replaces the current steps, and the user approves it first.
 - Call runPipeline when the user wants the cleaned file, or to apply the steps to the whole file. The user approves the run in the chat before it starts. If runPipeline returns "Tool execution was denied.", the user chose not to run it: the file and its pipeline are still there, nothing ran, and no cleaned file was made. Say that in one sentence and ask what to change. Never say a cleaned file is ready unless getProfile shows its run as done.
 - If a tool returns an error, fix the call and try again, or explain the problem to the user.
 
@@ -76,6 +77,22 @@ export const TOOL_SPECS = {
     description:
       "Move a step to another position, when the order of steps matters.",
     inputSchema: z.object({ stepId, position })
+  },
+  loadPipeline: {
+    description:
+      "Replace the latest upload's pipeline with a copy of the steps from an earlier upload. Use it when the user wants to reuse earlier cleaning steps. If it returns missing columns, ask the user which column to use for each, or whether to remove it, then call it again with columnMapping.",
+    inputSchema: z.object({
+      fromFile: z
+        .string()
+        .max(200)
+        .describe("Name of the earlier upload, as getProfile lists it."),
+      columnMapping: z
+        .record(z.string().max(200), z.string().max(200).nullable())
+        .optional()
+        .describe(
+          "For each missing column: the column of this file to use instead, or null to remove it."
+        )
+    })
   },
   runPipeline: {
     description:

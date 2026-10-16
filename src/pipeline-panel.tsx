@@ -1,21 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Button, Surface, Text } from "@cloudflare/kumo";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
   CaretDownIcon,
+  ExportIcon,
   EyeIcon,
   FlowArrowIcon,
   PencilSimpleIcon,
   PlayIcon,
   PlusIcon,
-  TrashIcon
+  TrashIcon,
+  UploadSimpleIcon
 } from "@phosphor-icons/react";
 import type {
   PipelineEdit,
   PipelineView,
+  ReplaceResult,
   TransformInfo
 } from "./pipeline-actions";
+import { MAX_PIPELINE_FILE_BYTES } from "./limits";
 import type { DatasetSummary } from "./server";
 import { humanize, StepForm, transformDescription } from "./step-form";
 
@@ -33,6 +37,116 @@ export interface PipelineApi {
   runPipelineNow(
     datasetId: string
   ): Promise<{ runId: string; version: number } | { error: string }>;
+  exportPipeline(
+    datasetId: string
+  ): Promise<{ file: unknown } | { error: string }>;
+  importPipeline(
+    datasetId: string,
+    text: string,
+    mapping?: Record<string, string | null>
+  ): Promise<ReplaceResult>;
+}
+
+/** An import waiting for the user to map the columns the file's steps need. */
+type PendingImport = {
+  text: string;
+  missing: string[];
+  columns: string[];
+  mapping: Record<string, string | null>;
+};
+
+/** Saves text as a file through the browser's download. */
+function saveFile(name: string, text: string) {
+  const url = URL.createObjectURL(
+    new Blob([text], { type: "application/json" })
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Asks which column of this file to use for each column the imported steps need, or to remove it. */
+function MappingForm({
+  pending,
+  busy,
+  onChange,
+  onApply,
+  onCancel
+}: {
+  pending: PendingImport;
+  busy: boolean;
+  onChange: (mapping: Record<string, string | null>) => void;
+  onApply: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="space-y-2 rounded-lg bg-kumo-base p-3 ring ring-kumo-warning">
+      <Text size="xs">
+        The imported steps use columns this file does not have. Pick a column to
+        use instead, or remove it from the steps.
+      </Text>
+      {pending.missing.map((name) => (
+        <div
+          key={name}
+          className="grid grid-cols-[9rem_1fr] gap-2 items-center"
+        >
+          <span className="text-xs text-kumo-default break-all">{name}</span>
+          <select
+            aria-label={`Column for ${name}`}
+            className="w-full rounded-md bg-kumo-control px-2 py-1 text-xs text-kumo-default ring ring-kumo-line"
+            // Values are prefixed, so no column name can be mistaken for "remove".
+            value={
+              !Object.hasOwn(pending.mapping, name)
+                ? ""
+                : pending.mapping[name] === null
+                  ? "remove"
+                  : `col:${pending.mapping[name]}`
+            }
+            onChange={(e) => {
+              const { [name]: _, ...rest } = pending.mapping;
+              const value = e.target.value;
+              onChange(
+                value === ""
+                  ? rest
+                  : {
+                      ...rest,
+                      [name]: value === "remove" ? null : value.slice(4)
+                    }
+              );
+            }}
+          >
+            <option value="">Choose…</option>
+            <option value="remove">Remove it from the steps</option>
+            {pending.columns.map((c) => (
+              <option key={c} value={`col:${c}`}>
+                Use “{c}”
+              </option>
+            ))}
+          </select>
+        </div>
+      ))}
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={
+            busy ||
+            pending.missing.some(
+              (name) => !Object.hasOwn(pending.mapping, name)
+            )
+          }
+          onClick={onApply}
+        >
+          Import steps
+        </Button>
+        <Button size="sm" variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 type ViewStep = PipelineView["steps"][number];
@@ -222,6 +336,8 @@ export function PipelinePanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmRun, setConfirmRun] = useState(false);
+  const [pending, setPending] = useState<PendingImport | null>(null);
+  const importInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api
@@ -245,7 +361,11 @@ export function PipelinePanel({
         }
         setView(result);
       })
-      .catch((e: unknown) => console.error("Could not load pipeline:", e));
+      .catch((e: unknown) => {
+        console.error("Could not load pipeline:", e);
+        if (!cancelled)
+          setError("Could not load the pipeline. Please reload the page.");
+      });
     return () => {
       cancelled = true;
     };
@@ -281,6 +401,59 @@ export function PipelinePanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const exportFile = async () => {
+    setError(null);
+    const result = await api.exportPipeline(dataset.id);
+    if ("error" in result) return setError(result.error);
+    const base = dataset.name.replace(/\.(csv|tsv|txt)$/i, "") || "data";
+    saveFile(`${base}-pipeline.json`, JSON.stringify(result.file, null, 2));
+  };
+
+  /** Sends a pipeline file to the agent; it asks for a column mapping when the file's steps need columns this file lacks. */
+  const importText = async (
+    text: string,
+    mapping?: Record<string, string | null>
+  ) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.importPipeline(dataset.id, text, mapping);
+      if ("error" in result) {
+        setError(result.error);
+        setPending(null);
+      } else if ("needsMapping" in result) {
+        setPending({
+          text,
+          missing: result.missing,
+          columns: result.columns,
+          mapping: {}
+        });
+      } else {
+        setPending(null);
+        setNotice(
+          `Imported ${result.steps === 1 ? "1 step" : `${result.steps} steps`}${result.dropped > 0 ? `; ${result.dropped} left out because their columns were removed` : ""}.`
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > MAX_PIPELINE_FILE_BYTES)
+      return setError("The pipeline file is too large.");
+    if (
+      steps.length > 0 &&
+      !window.confirm(
+        `Importing replaces the ${steps.length === 1 ? "current step" : `current ${steps.length} steps`}. Continue?`
+      )
+    )
+      return;
+    await importText(await file.text());
   };
 
   const transformOf = (op: string) => catalog.find((t) => t.name === op);
@@ -484,7 +657,28 @@ export function PipelinePanel({
             </div>
           )}
 
+          {pending && (
+            <MappingForm
+              pending={pending}
+              busy={busy}
+              onChange={(mapping) => setPending({ ...pending, mapping })}
+              onApply={() => void importText(pending.text, pending.mapping)}
+              onCancel={() => setPending(null)}
+            />
+          )}
+
           <div className="flex flex-wrap items-center gap-2 pt-1">
+            <input
+              ref={importInput}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              aria-label="Import a pipeline file"
+              onChange={(e) => {
+                void pickImportFile(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
             {confirmRun ? (
               <>
                 <Text size="xs">
@@ -513,6 +707,26 @@ export function PipelinePanel({
                 {running ? "Running…" : "Run on whole file"}
               </Button>
             )}
+            <span className="ml-auto flex gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<ExportIcon size={14} />}
+                disabled={steps.length === 0}
+                onClick={() => void exportFile()}
+              >
+                Export
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<UploadSimpleIcon size={14} />}
+                disabled={busy}
+                onClick={() => importInput.current?.click()}
+              >
+                Import
+              </Button>
+            </span>
           </div>
         </div>
       )}

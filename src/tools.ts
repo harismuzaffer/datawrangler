@@ -4,10 +4,12 @@ import { buildPreview, type Preview } from "./pipeline";
 import {
   editPipeline,
   readyDataset,
+  replacePipeline,
   startCheckedRun,
   type PipelineEdit,
   type PipelineHost
 } from "./pipeline-actions";
+import { findMissingColumns } from "./pipeline-file";
 import { profileForLlm } from "./profile-summary";
 import { TOOL_SPECS } from "./prompts";
 
@@ -67,6 +69,15 @@ function toolSchema<S extends z.ZodType>(schema: S) {
   });
 }
 
+/** The earlier upload a loadPipeline call names: the newest one with that name, ignoring letter case. */
+function findEarlier(host: PipelineHost, datasetId: string, name: string) {
+  const earlier = host.earlierPipelines(datasetId);
+  return {
+    source: earlier.find((p) => p.name.toLowerCase() === name.toLowerCase()),
+    names: earlier.map((p) => p.name)
+  };
+}
+
 /** Builds the LLM tools for one chat turn. */
 export function createTools(host: PipelineHost) {
   return {
@@ -95,7 +106,11 @@ export function createTools(host: PipelineHost) {
                 ...(run.rowCount !== null ? { rows: run.rowCount } : {}),
                 ...(run.error ? { error: run.error } : {})
               }
-            : "No run yet, so there is no cleaned file."
+            : "No run yet, so there is no cleaned file.",
+          earlierUploads: host
+            .earlierPipelines(dataset.id)
+            .slice(0, 10)
+            .map((p) => ({ file: p.name, steps: p.steps.length }))
         };
       }
     }),
@@ -125,6 +140,48 @@ export function createTools(host: PipelineHost) {
       inputSchema: toolSchema(TOOL_SPECS.moveStep.inputSchema),
       execute: ({ stepId, position }) =>
         editLatest(host, { type: "move", stepId, position })
+    }),
+
+    loadPipeline: tool({
+      description: TOOL_SPECS.loadPipeline.description,
+      inputSchema: toolSchema(TOOL_SPECS.loadPipeline.inputSchema),
+      // Replacing the steps cannot be undone, so the user approves the call that would do it.
+      // A call that only reports missing columns or a wrong name changes nothing and needs no approval.
+      needsApproval: ({ fromFile, columnMapping }) => {
+        const dataset = readyDataset(host.latestDataset());
+        if ("error" in dataset) return false;
+        const { source } = findEarlier(host, dataset.id, fromFile);
+        if (!source) return false;
+        const missing = findMissingColumns(
+          source.steps,
+          dataset.profile.columns.map((c) => c.name)
+        );
+        return missing.every((name) =>
+          Object.hasOwn(columnMapping ?? {}, name)
+        );
+      },
+      execute: async ({ fromFile, columnMapping }) => {
+        const dataset = readyDataset(host.latestDataset());
+        if ("error" in dataset) return dataset;
+        const { source, names } = findEarlier(host, dataset.id, fromFile);
+        if (!source)
+          return {
+            error: `No earlier upload named "${fromFile}" has steps. Earlier uploads with steps: ${names.join(", ") || "none"}.`
+          };
+        const result = await replacePipeline(
+          host,
+          dataset,
+          source.steps,
+          columnMapping
+        );
+        if ("needsMapping" in result)
+          return {
+            missingColumns: result.missing,
+            columnsOfThisFile: result.columns,
+            note: "Nothing was changed. Ask the user which column of this file to use for each missing column, or whether to remove it, then call loadPipeline again with columnMapping."
+          };
+        return result;
+      }
     }),
 
     runPipeline: tool({

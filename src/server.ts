@@ -19,12 +19,19 @@ import {
 import type { DatasetProfile } from "./profile";
 import type { ProfileParams } from "./profile-workflow";
 import type { RunParams } from "./run-workflow";
+import {
+  exportPipeline,
+  parsePipelineFile,
+  PipelineFileError
+} from "./pipeline-file";
 import { SYSTEM_PROMPT } from "./prompts";
 import { z } from "zod";
 import { tableFromRecords, type Table } from "./table";
 import {
+  columnMappingSchema,
   editPipeline,
   pipelineEditSchema,
+  replacePipeline,
   pipelineView,
   readyDataset,
   startCheckedRun,
@@ -421,6 +428,18 @@ export class CobblerAgent
     return row ? datasetInfo(row) : null;
   }
 
+  earlierPipelines(exceptDatasetId: string) {
+    const rows = this.sql<{ id: string; name: string; steps: string }>`
+      select d.id, d.name, p.steps from datasets d join pipelines p on p.dataset_id = d.id
+      where d.id != ${exceptDatasetId} and p.steps != '[]'
+      order by d.created_at desc limit 20`;
+    return rows.map((row) => ({
+      datasetId: row.id,
+      name: row.name,
+      steps: JSON.parse(row.steps) as Pipeline["steps"]
+    }));
+  }
+
   dataset(id: string): DatasetInfo | null {
     const [row] = this.sql<DatasetRow>`select * from datasets where id = ${id}`;
     return row ? datasetInfo(row) : null;
@@ -515,6 +534,45 @@ export class CobblerAgent
       saved: true as const,
       ...(result.warning ? { warning: result.warning } : {})
     };
+  }
+
+  /** The dataset's pipeline as a file the user can save and import later. */
+  @callable()
+  exportPipeline(datasetId: unknown) {
+    const input = panelInput.safeParse({ datasetId });
+    if (!input.success) return { error: "Invalid request." };
+    const dataset = this.dataset(input.data.datasetId);
+    if (!dataset) return { error: "There is no such file." };
+    return {
+      file: exportPipeline(this.loadPipeline(dataset.id).steps, dataset.name)
+    };
+  }
+
+  /**
+   * Replaces the dataset's pipeline with one from a pipeline file the user picked.
+   * Returns `needsMapping` when the file's steps use columns this file lacks; the panel then asks the user and calls again with a mapping.
+   */
+  @callable()
+  async importPipeline(datasetId: unknown, text: unknown, mapping?: unknown) {
+    const input = panelInput.safeParse({ datasetId });
+    const parsedMapping = columnMappingSchema.nullish().safeParse(mapping);
+    if (!input.success || typeof text !== "string" || !parsedMapping.success)
+      return { error: "Invalid request." };
+    const dataset = readyDataset(this.dataset(input.data.datasetId));
+    if ("error" in dataset) return dataset;
+    let file: ReturnType<typeof parsePipelineFile>;
+    try {
+      file = parsePipelineFile(text);
+    } catch (error) {
+      if (error instanceof PipelineFileError) return { error: error.message };
+      throw error;
+    }
+    return replacePipeline(
+      this,
+      dataset,
+      file.steps,
+      parsedMapping.data ?? undefined
+    );
   }
 
   /** Starts a full run from the pipeline panel. The panel asks the user to confirm before it calls this. */

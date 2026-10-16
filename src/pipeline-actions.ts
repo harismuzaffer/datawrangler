@@ -3,12 +3,19 @@ import {
   addStep,
   buildPreview,
   moveStep,
-  PipelineError,
   removeStep,
   updateStep,
+  PipelineError,
   type Pipeline,
-  type Preview
+  type Preview,
+  type Step
 } from "./pipeline";
+import {
+  applyColumnMapping,
+  findMissingColumns,
+  pipelineFromSteps,
+  type FileStep
+} from "./pipeline-file";
 import type { DatasetProfile } from "./profile";
 import type { RunSummary } from "./server";
 import type { Table } from "./table";
@@ -39,6 +46,10 @@ export interface PipelineHost {
     datasetId: string
   ): Promise<{ runId: string; version: number } | { error: string }>;
   latestRun(datasetId: string): RunSummary | null;
+  /** Earlier uploads that have pipeline steps, newest first, for reuse. */
+  earlierPipelines(
+    exceptDatasetId: string
+  ): { datasetId: string; name: string; steps: Step[] }[];
 }
 
 export type ReadyDataset = {
@@ -263,4 +274,66 @@ export function transformCatalog(): TransformInfo[] {
       schema
     };
   });
+}
+
+/** The user's answer for columns a reused pipeline needs: a column of this file, or null to remove it. */
+export const columnMappingSchema = z
+  .record(z.string().max(200), z.string().max(200).nullable())
+  .refine((mapping) => Object.keys(mapping).length <= 100);
+
+export type ReplaceResult =
+  | { error: string }
+  | { needsMapping: true; missing: string[]; columns: string[] }
+  | { saved: true; steps: number; dropped: number };
+
+/**
+ * Replaces a dataset's pipeline with steps from a file or an earlier upload.
+ * Returns `needsMapping` when the steps use columns this file lacks and `mapping` does not cover them all.
+ * Nothing is saved unless every step works on the sample.
+ */
+export async function replacePipeline(
+  host: PipelineHost,
+  dataset: ReadyDataset,
+  fileSteps: FileStep[],
+  mapping: Record<string, string | null> = {}
+): Promise<ReplaceResult> {
+  const columns = dataset.profile.columns.map((c) => c.name);
+  const missing = findMissingColumns(fileSteps, columns);
+  const unmapped = missing.filter((name) => !Object.hasOwn(mapping, name));
+  if (unmapped.length > 0) return { needsMapping: true, missing, columns };
+  const bad = Object.entries(mapping).find(
+    ([from, to]) =>
+      !missing.includes(from) || (to !== null && !columns.includes(to))
+  );
+  if (bad)
+    return {
+      error: `"${bad[0]}" cannot be mapped to "${bad[1]}". Map only missing columns, to columns of this file.`
+    };
+
+  const steps = applyColumnMapping(fileSteps, mapping);
+  const sample = await host.loadSample(dataset.id, dataset.profile);
+  let pipeline: Pipeline;
+  try {
+    pipeline = pipelineFromSteps(
+      steps,
+      host.loadPipeline(dataset.id).nextStepNumber
+    );
+  } catch (error) {
+    if (error instanceof PipelineError) return { error: error.message };
+    throw error;
+  }
+  const preview = buildPreview(sample.table, pipeline.steps, {
+    partial: sample.partial
+  });
+  const failing = preview.steps.findIndex((s) => s.status === "error");
+  if (failing !== -1)
+    return {
+      error: `Nothing was changed. Step ${failing + 1} (${preview.steps[failing].op}) does not work on this file: ${preview.steps[failing].summary}`
+    };
+  host.savePipeline(dataset.id, pipeline);
+  return {
+    saved: true,
+    steps: pipeline.steps.length,
+    dropped: fileSteps.length - steps.length
+  };
 }

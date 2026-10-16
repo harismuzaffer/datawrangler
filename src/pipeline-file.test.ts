@@ -100,6 +100,9 @@ describe("pipelineFromSteps", () => {
         { op: "dedupe", params: {} }
       ]).steps.map((s) => s.id)
     ).toEqual(["s1", "s2"]);
+    expect(
+      pipelineFromSteps([{ op: "dedupe", params: {} }], 7).steps[0].id
+    ).toBe("s7");
     expect(() =>
       pipelineFromSteps([
         { op: "trim", params: { columns: "*" } },

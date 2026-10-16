@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_PIPELINE_FILE_BYTES } from "./limits";
 import {
   addStep,
   emptyPipeline,
@@ -9,9 +10,6 @@ import {
 
 export const PIPELINE_FORMAT = "datacobbler-pipeline";
 export const PIPELINE_VERSION = 1;
-
-/** Largest pipeline file accepted. A full pipeline of 100 steps is far smaller. */
-export const MAX_PIPELINE_FILE_BYTES = 256 * 1024;
 
 /** A step as stored in a file: no ID, because IDs belong to one pipeline. */
 export interface FileStep {
@@ -169,15 +167,25 @@ export function applyColumnMapping(
   return result;
 }
 
-/** Builds a new pipeline from file steps, checking each transform and its parameters. Throws a PipelineError naming the bad step. */
-export function pipelineFromSteps(steps: FileStep[]): Pipeline {
-  return steps.reduce((pipeline, step, i) => {
-    try {
-      return addStep(pipeline, step.op, step.params).pipeline;
-    } catch (error) {
-      if (error instanceof PipelineError)
-        throw new PipelineError(`Step ${i + 1}: ${error.message}`);
-      throw error;
-    }
-  }, emptyPipeline());
+/**
+ * Builds a new pipeline from file steps, checking each transform and its parameters.
+ * Step IDs start at `firstStepNumber`, so IDs of the pipeline it replaces are not reused.
+ * Throws a PipelineError naming the bad step.
+ */
+export function pipelineFromSteps(
+  steps: FileStep[],
+  firstStepNumber = 1
+): Pipeline {
+  return steps.reduce(
+    (pipeline, step, i) => {
+      try {
+        return addStep(pipeline, step.op, step.params).pipeline;
+      } catch (error) {
+        if (error instanceof PipelineError)
+          throw new PipelineError(`Step ${i + 1}: ${error.message}`);
+        throw error;
+      }
+    },
+    { ...emptyPipeline(), nextStepNumber: firstStepNumber }
+  );
 }

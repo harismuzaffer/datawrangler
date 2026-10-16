@@ -113,7 +113,9 @@ function ToolIO({ label, value }: { label: string; value: unknown }) {
 /** Plain questions for tools that need the user's approval. */
 const APPROVAL_TITLES: Record<string, string> = {
   runPipeline:
-    "Run the pipeline on the whole file and make a cleaned copy? Your original file is kept."
+    "Run the pipeline on the whole file and make a cleaned copy? Your original file is kept.",
+  loadPipeline:
+    "Replace the current steps with the steps from an earlier upload?"
 };
 
 function ToolPartView({
@@ -316,7 +318,11 @@ function Chat() {
       editPipelineStep: (datasetId, edit) =>
         agentRef.current.stub.editPipelineStep(datasetId, edit),
       runPipelineNow: (datasetId) =>
-        agentRef.current.stub.runPipelineNow(datasetId)
+        agentRef.current.stub.runPipelineNow(datasetId),
+      exportPipeline: (datasetId) =>
+        agentRef.current.stub.exportPipeline(datasetId),
+      importPipeline: (datasetId, text, mapping) =>
+        agentRef.current.stub.importPipeline(datasetId, text, mapping)
     }),
     []
   );

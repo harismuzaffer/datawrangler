@@ -51,7 +51,7 @@ Left out of v1: regex (a bad pattern can lock the CPU), formulas or computed col
 About 9 tools, grouped by action on the pipeline, not one per transform.
 Reason: every tool definition goes into each prompt, and open models choose tools worse when the list is long or the schemas are large.
 
-Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `previewPipeline`, `runPipeline`. Later: `loadPipeline`, `rememberPreference`.
+Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `previewPipeline`, `runPipeline`, `loadPipeline`. Later: `rememberPreference`.
 
 - `addStep` takes `{ op, params, position? }`. `op` is an enum of transform names. The system prompt holds a one-line catalog of the transforms, built from each transform's usage text.
 - The server validates `params` with the zod schema for that `op`. On failure, it returns the exact error and the usage line so the LLM can retry. Errors are returned as tool results, not thrown, so the model sees them.
@@ -62,6 +62,7 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - Prompts and tool specs live in `src/prompts.ts`; tool logic lives in `src/tools.ts`. Edits, sample checks, and run starts live in `src/pipeline-actions.ts` behind a small `PipelineHost` interface, so the chat and the pipeline panel follow the same rules, and both are tested without a Durable Object.
 - **`runPipeline` needs the user's approval** (the AI SDK's `needsApproval`). The chat shows a card with Approve and Reject buttons; the run starts only after Approve. Before it starts, the tool runs the pipeline on the preview rows and refuses if a step fails there. The tool returns at once; the run's progress and the download link appear in the panel, and `getProfile` reports the latest run so the LLM can answer "is it done?".
 - **A rejected run reaches the model as "Tool execution was denied."** The prompt says what that means. Without that line, Mistral claimed the cleaned file was ready, or that no file was uploaded: the agent prunes older tool results from the history, so the model no longer saw the profile. With it, 4 of 4 rejected runs got a truthful reply (checked 2026-10-16).
+- **`loadPipeline` reuses steps from an earlier upload,** found by file name (`getProfile` lists earlier uploads with steps). It replaces the current steps, so the call that would save needs the user's approval. A call that only reports missing columns, or a wrong name, changes nothing and needs no approval, so the user is not asked twice.
 - Export, import, and download are UI buttons only.
 
 ## Pipeline files and reuse
@@ -69,6 +70,9 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **File format:** JSON with `format: "datacobbler-pipeline"`, `version: 1`, `source` (the CSV it was made for), `exportedAt`, and `steps` as `{ op, params }`. Step IDs are left out; an imported pipeline gets new ones.
 - **Checks on import:** at most 256 KB and 100 steps, the format and version must match, and each step goes through the same checks as an added step. An error names the step number.
 - **Missing columns.** Before a pipeline is used on another file, the columns its steps use are compared with the file's columns. A column made by an earlier step (a rename or a new column) counts as present. Letter case is ignored when only one column matches, as in steps. The user maps each missing column to a real one, or removes it: it is taken out of column lists, and a step left with nothing to work on is dropped.
+
+- **Import and reuse replace the whole pipeline,** and nothing is saved unless every step works on the sample. The panel asks before it replaces existing steps. New step IDs continue the old counter.
+- **Checked by hand** on 2026-10-16 in a headless browser: export from one file, import into a file whose `city` column is named `town` (the panel asked, the user mapped it), a file that is not a pipeline (refused), and reuse from chat with a mapping (one approval).
 
 ## Pipeline panel
 
