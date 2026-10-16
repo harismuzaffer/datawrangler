@@ -35,11 +35,13 @@ How the code is organized and how to write it. Read this before changing code. U
 
 One line per file or module. Keep this list current.
 
-- `src/server.ts`: Worker entry and `CobblerAgent`: chat loop and LLM call, upload route, `datasets` and `pipelines` tables, preview sample loading, synced state, workflow callbacks.
+- `src/server.ts`: Worker entry and `CobblerAgent`: chat loop and LLM call, upload and download routes, `datasets`, `pipelines`, and `runs` tables, preview sample loading, starting full runs, synced state, workflow callbacks.
 - `src/prompts.ts`: system prompt (with the transform catalog) and the tool descriptions and input schemas.
 - `src/tools.ts`: the LLM tools. They reach the agent through the `ToolHost` interface. Tool input schemas are converted with zod (see `toolSchema`), not by the AI SDK.
 - `src/upload.ts`: upload checks: body size limit while reading, binary-file check, file name and user ID schemas.
 - `src/profile-workflow.ts`: `ProfileWorkflow`: reads a CSV from R2, profiles it, reports the profile to the agent.
+- `src/run-workflow.ts`: `RunWorkflow`: runs a pipeline on a whole file from R2 and writes the result as a new file version.
+- `src/download.ts`: the cleaned file's name and the `Content-Disposition` header for downloads.
 - `src/profile-summary.ts`: shrinks a profile to fit the LLM's context.
 - `src/ai-binding.ts`: wraps the Workers AI binding to fix duplicated fields in streamed responses (a provider bug).
 - `src/csv.ts`: decodes file bytes (BOM, UTF-8, UTF-16, Windows-1252 fallback) and parses CSV with Papa Parse (delimiter detection, quoted fields); writes a table back to CSV bytes.
@@ -59,5 +61,7 @@ A few steps per flow, once it exists.
 
 - **Upload and profile:** browser (user ID from local storage) `POST /agents/cobbler-agent/{userId}/upload?name=…` -> `CobblerAgent.onRequest` checks size and type -> R2 `{userId}/{datasetId}/v0.csv` -> `datasets` row with status `profiling` -> `ProfileWorkflow` (instance ID = dataset ID) -> `onWorkflowComplete` stores the profile, or `onWorkflowError` stores the error -> state sync tells the browser -> the panel fetches the full profile with the `getProfile` callable.
 - **Pipeline edit (tool call):** `addStep` / `updateStep` / `removeStep` / `moveStep` -> load the preview sample (cached, or first 512 KB from R2) -> apply the edit to the stored pipeline -> run all steps on the sample -> refuse if the edited step fails, else save to `pipelines` -> return each step's summary to the LLM.
+- **Full run:** `startRun` checks the dataset is ready and no run is in progress -> `runs` row (next version, status `running`, a copy of the steps) -> `RunWorkflow` (instance ID = run ID) reads `v0.csv`, runs every step, writes `{userId}/{datasetId}/v{n}.csv` -> `onWorkflowComplete` stores the report, or `onWorkflowError` stores the error -> state sync shows the latest run per dataset.
+- **Download:** browser `GET /agents/cobbler-agent/{userId}/download?run={runId}` -> `CobblerAgent.onRequest` finds a finished run -> streams the file from R2 as an attachment named like `sales-cleaned-v2.csv`.
 - **Profile ready:** `onWorkflowComplete` also creates the dataset's pipeline with the safe steps the profile calls for.
 - **Chat message:** browser -> WebSocket -> `CobblerAgent.onChatMessage` -> Workers AI (streamed, through the stream fix) -> tool calls if needed -> reply streamed back. Messages persist in the agent's SQLite storage.

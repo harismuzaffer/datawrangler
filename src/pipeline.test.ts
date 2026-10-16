@@ -177,7 +177,7 @@ describe("runPipeline", () => {
     ]);
     expect(report).toEqual({
       rowCount: 2,
-      columns: ["name", "city", "amount"],
+      columnCount: 3,
       steps: [
         { id: "s1", op: "trim", summary: "Changed 1 cell." },
         { id: "s2", op: "dropEmptyRows", summary: "Removed 1 row." },

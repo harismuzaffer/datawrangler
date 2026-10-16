@@ -57,6 +57,11 @@
 			"binding": "PROFILE_WORKFLOW",
 			"class_name": "ProfileWorkflow",
 			"name": "profile-workflow"
+		},
+		{
+			"binding": "RUN_WORKFLOW",
+			"class_name": "RunWorkflow",
+			"name": "run-workflow"
 		}
 	],
 	"observability": {

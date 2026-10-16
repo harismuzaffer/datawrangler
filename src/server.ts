@@ -9,10 +9,18 @@ import {
 } from "ai";
 import { withStreamFix } from "./ai-binding";
 import { parseSample, SAMPLE_BYTES } from "./csv";
-import { emptyPipeline, safePipeline, type Pipeline } from "./pipeline";
+import { cleanedFileName, contentDisposition } from "./download";
+import {
+  emptyPipeline,
+  safePipeline,
+  type Pipeline,
+  type RunReport
+} from "./pipeline";
 import type { DatasetProfile } from "./profile";
 import type { ProfileParams } from "./profile-workflow";
+import type { RunParams } from "./run-workflow";
 import { SYSTEM_PROMPT } from "./prompts";
+import { z } from "zod";
 import { tableFromRecords, type Table } from "./table";
 import { createTools, type ToolHost } from "./tools";
 import {
@@ -24,8 +32,20 @@ import {
 } from "./upload";
 
 export { ProfileWorkflow } from "./profile-workflow";
+export { RunWorkflow } from "./run-workflow";
 
 export type DatasetStatus = "profiling" | "ready" | "failed";
+export type RunStatus = "running" | "done" | "failed";
+
+/** What the browser sees about the latest full run of a dataset. */
+export interface RunSummary {
+  id: string;
+  version: number;
+  status: RunStatus;
+  error: string | null;
+  rowCount: number | null;
+  columnCount: number | null;
+}
 
 /** What the browser sees about one uploaded file. The full profile is fetched separately because it can be large. */
 export interface DatasetSummary {
@@ -38,6 +58,7 @@ export interface DatasetSummary {
   columnCount: number | null;
   issueCount: number | null;
   createdAt: number;
+  latestRun: RunSummary | null;
 }
 
 /** Agent state, synced to every connected browser. */
@@ -57,6 +78,18 @@ type DatasetRow = {
 };
 
 type PipelineRow = { steps: string; next_step_number: number };
+
+type RunRow = {
+  id: string;
+  dataset_id: string;
+  version: number;
+  status: RunStatus;
+  r2_key: string;
+  report: string | null;
+  error: string | null;
+};
+
+const runIdSchema = z.uuid();
 
 function countIssues(profile: DatasetProfile): number {
   return (
@@ -100,10 +133,26 @@ export class CobblerAgent
       next_step_number integer not null,
       updated_at integer not null
     )`;
+    // Each full run writes a new file version; `steps` keeps the pipeline that made it.
+    this.sql`create table if not exists runs (
+      id text primary key,
+      dataset_id text not null,
+      version integer not null,
+      status text not null,
+      steps text not null,
+      r2_key text not null,
+      report text,
+      error text,
+      created_at integer not null,
+      finished_at integer,
+      unique (dataset_id, version)
+    )`;
   }
 
   async onRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname.endsWith("/download"))
+      return this.download(url);
     if (request.method === "POST" && url.pathname.endsWith("/upload")) {
       try {
         return Response.json(await this.upload(request, url));
@@ -155,11 +204,98 @@ export class CobblerAgent
     return { id };
   }
 
+  /** Sends the file a finished run wrote, as an attachment. */
+  private async download(url: URL): Promise<Response> {
+    const runId = runIdSchema.safeParse(url.searchParams.get("run"));
+    if (!runId.success) return new Response("Invalid run.", { status: 400 });
+    const [run] = this.sql<RunRow & { name: string }>`
+      select runs.*, datasets.name from runs join datasets on datasets.id = runs.dataset_id
+      where runs.id = ${runId.data} and runs.status = 'done'`;
+    if (!run) return new Response("Not found", { status: 404 });
+    const object = await this.env.FILES.get(run.r2_key);
+    if (!object) return new Response("Not found", { status: 404 });
+    return new Response(object.body, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Length": String(object.size),
+        "Content-Disposition": contentDisposition(
+          cleanedFileName(run.name, run.version)
+        ),
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff"
+      }
+    });
+  }
+
+  /**
+   * Starts a full run of the dataset's current pipeline. The result becomes the next file version.
+   * Returns a message instead when the run cannot start, for the LLM or the UI to show.
+   */
+  async startRun(
+    datasetId: string
+  ): Promise<{ runId: string; version: number } | { error: string }> {
+    const [dataset] = this
+      .sql<DatasetRow>`select * from datasets where id = ${datasetId}`;
+    if (dataset?.status !== "ready")
+      return { error: "The file is not ready to run yet." };
+    const [running] = this
+      .sql<RunRow>`select id from runs where dataset_id = ${datasetId} and status = 'running'`;
+    if (running) return { error: "A run of this file is already in progress." };
+
+    // No await between reading the last version and inserting the new one, so two runs cannot get the same version.
+    const [{ last }] = this.sql<{
+      last: number | null;
+    }>`select max(version) as last from runs where dataset_id = ${datasetId}`;
+    const version = (last ?? 0) + 1;
+    const runId = crypto.randomUUID();
+    const outputKey = `${this.name}/${datasetId}/v${version}.csv`;
+    const { steps } = this.loadPipeline(datasetId);
+    this
+      .sql`insert into runs (id, dataset_id, version, status, steps, r2_key, created_at)
+      values (${runId}, ${datasetId}, ${version}, 'running', ${JSON.stringify(steps)}, ${outputKey}, ${Date.now()})`;
+    this.syncState();
+
+    try {
+      await this.runWorkflow<RunParams>(
+        "RUN_WORKFLOW",
+        { inputKey: dataset.r2_key, outputKey, steps },
+        { id: runId }
+      );
+    } catch (error) {
+      console.error("Could not start run:", runId, error);
+      this.finishRun(runId, {
+        error: "Could not start the run. Please try again."
+      });
+      return { error: "Could not start the run. Please try again." };
+    }
+    return { runId, version };
+  }
+
+  /** Records the end of a run. Only a run still marked running changes, so a repeated callback changes nothing. */
+  private finishRun(
+    runId: string,
+    outcome: { report: RunReport } | { error: string }
+  ) {
+    if ("report" in outcome)
+      this
+        .sql`update runs set status = 'done', report = ${JSON.stringify(outcome.report)}, finished_at = ${Date.now()}
+        where id = ${runId} and status = 'running'`;
+    else
+      this
+        .sql`update runs set status = 'failed', error = ${outcome.error}, finished_at = ${Date.now()}
+        where id = ${runId} and status = 'running'`;
+    this.syncState();
+  }
+
   async onWorkflowComplete(
-    _workflowName: string,
+    workflowName: string,
     workflowId: string,
     result?: unknown
   ) {
+    if (workflowName === "RUN_WORKFLOW") {
+      this.finishRun(workflowId, { report: result as RunReport });
+      return;
+    }
     const profile = result as DatasetProfile;
     // Only a dataset still being profiled is updated, so a repeated callback changes nothing.
     this
@@ -173,14 +309,22 @@ export class CobblerAgent
   }
 
   async onWorkflowError(
-    _workflowName: string,
+    workflowName: string,
     workflowId: string,
     error: string
   ) {
-    // The workflow marks only user-facing messages as non-retryable; anything else is an internal error.
+    // The workflows mark only user-facing messages as non-retryable; anything else is an internal error.
     const userMessage = /^NonRetryableError: (.+)$/s.exec(error)?.[1];
     if (!userMessage)
-      console.error("Profile workflow failed:", workflowId, error);
+      console.error("Workflow failed:", workflowName, workflowId, error);
+    if (workflowName === "RUN_WORKFLOW") {
+      this.finishRun(workflowId, {
+        error:
+          userMessage ??
+          "Something went wrong while running the pipeline. Please try again."
+      });
+      return;
+    }
     this.markFailed(
       workflowId,
       userMessage ??
@@ -199,6 +343,21 @@ export class CobblerAgent
     const rows = this
       .sql<DatasetRow>`select id, name, size, status, error, profile, created_at
       from datasets order by created_at desc`;
+    const latestRuns = new Map<string, RunSummary>();
+    // Newest first, so the first run seen for a dataset is its latest.
+    for (const run of this
+      .sql<RunRow>`select id, dataset_id, version, status, report, error from runs order by version desc`) {
+      if (latestRuns.has(run.dataset_id)) continue;
+      const report = run.report ? (JSON.parse(run.report) as RunReport) : null;
+      latestRuns.set(run.dataset_id, {
+        id: run.id,
+        version: run.version,
+        status: run.status,
+        error: run.error,
+        rowCount: report?.rowCount ?? null,
+        columnCount: report?.columnCount ?? null
+      });
+    }
     const datasets = rows.map((row): DatasetSummary => {
       const profile = row.profile
         ? (JSON.parse(row.profile) as DatasetProfile)
@@ -212,7 +371,8 @@ export class CobblerAgent
         rowCount: profile?.rowCount ?? null,
         columnCount: profile?.columnCount ?? null,
         issueCount: profile ? countIssues(profile) : null,
-        createdAt: row.created_at
+        createdAt: row.created_at,
+        latestRun: latestRuns.get(row.id) ?? null
       };
     });
     this.setState({ ...this.state, datasets });

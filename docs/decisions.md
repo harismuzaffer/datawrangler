@@ -62,6 +62,16 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - Prompts and tool specs live in `src/prompts.ts`; tool logic lives in `src/tools.ts` behind a small `ToolHost` interface, so it is tested without a Durable Object.
 - Export, import, and download are UI buttons only.
 
+## Full runs and download
+
+- **A run always starts from the original upload** (`v0.csv`) and writes the next version (`v1.csv`, `v2.csv`, …). Older versions stay, so a bad run loses nothing.
+- **A run uses a copy of the steps** made when it starts, stored with the run. Edits made while it runs change only the next run, and each version records the pipeline that made it.
+- **One run per file at a time.** A second run is refused while one is in progress, so versions finish in order.
+- **Workflow instance ID = run ID.** The agent tells profile callbacks from run callbacks by the workflow binding name.
+- **Errors:** a step that fails on the whole file, or a file that cannot be read, fails the run without retries, and its message is shown to the user. Other errors are logged, and the user sees a generic message.
+- **Checked by hand** on 2026-10-16 in `wrangler dev`: a 5 MB file (67,301 rows) profiled, ran in about 1 s, and downloaded in full. Two runs started at the same moment gave one run and one refusal. The local runtime crashed once while profiling that file; four retries did not crash, so the cause is unknown.
+- **Download goes through the agent** (`GET /agents/cobbler-agent/{userId}/download?run={runId}`), which streams the file from R2. Only finished runs can be downloaded. The file name comes from the upload's name, so the header keeps only safe characters in `filename` and puts the full name, percent-encoded, in `filename*`.
+
 ## Preview sample
 
 - A preview runs on the header and the first 200 data rows. The agent reads only the first 512 KB of the file (an R2 range read), decodes it with the encoding found by the profile, and drops a row that may be cut off at the end.

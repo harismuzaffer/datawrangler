@@ -233,7 +233,7 @@ export function describeRun(run: StepRun): string {
 /** What a full run did: the size of the result and one sentence per step. Small enough to store and show. */
 export interface RunReport {
   rowCount: number;
-  columns: string[];
+  columnCount: number;
   steps: { id: string; op: TransformName; summary: string }[];
 }
 
@@ -256,7 +256,7 @@ export function runPipeline(
     table,
     report: {
       rowCount: table.rows.length,
-      columns: table.columns,
+      columnCount: table.columns.length,
       steps: runs.map((run) => ({
         id: run.id,
         op: run.op,
