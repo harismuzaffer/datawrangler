@@ -218,6 +218,26 @@ describe("buildPreview", () => {
     ]);
   });
 
+  it("gives the columns each step saw when asked, also for skipped steps", () => {
+    const p = build(
+      ["renameColumn", { column: "city", to: "town" }],
+      ["trim", { columns: ["city"] }],
+      ["dedupe", {}]
+    );
+    const preview = buildPreview(sample(), p.steps, {
+      partial: false,
+      columnsBefore: true
+    });
+    expect(preview.steps.map((s) => s.columnsBefore)).toEqual([
+      ["name", "city", "amount"],
+      ["name", "town", "amount"],
+      ["name", "town", "amount"]
+    ]);
+    expect(
+      buildPreview(sample(), p.steps, { partial: false }).steps[0]
+    ).not.toHaveProperty("columnsBefore");
+  });
+
   it("does not mark whole-file steps when the sample is the whole file", () => {
     const preview = buildPreview(sample(), build(["dedupe", {}]).steps, {
       partial: false

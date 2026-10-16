@@ -152,6 +152,8 @@ export interface StepRun {
   status: "ok" | "error" | "skipped";
   error?: string;
   result?: StepResult;
+  /** The columns the step saw, so an editor can offer them. */
+  columnsBefore: string[];
 }
 
 /**
@@ -180,22 +182,28 @@ function applySteps(
   const runs: StepRun[] = [];
   let failed = false;
   for (const step of steps) {
+    // Copied, because some transforms change the column list in place.
+    const base = {
+      id: step.id,
+      op: step.op,
+      columnsBefore: [...table.columns]
+    };
     if (failed) {
-      runs.push({ id: step.id, op: step.op, status: "skipped" });
+      runs.push({ ...base, status: "skipped" });
       continue;
     }
     const ctx = createContext(table);
     try {
       TRANSFORMS[step.op].apply(ctx, step.params);
       table = ctx.table;
-      runs.push({ id: step.id, op: step.op, status: "ok", result: ctx.result });
+      runs.push({ ...base, status: "ok", result: ctx.result });
     } catch (error) {
       if (!(error instanceof StepError || error instanceof z.ZodError))
         throw error;
       failed = true;
       const message =
         error instanceof z.ZodError ? z.prettifyError(error) : error.message;
-      runs.push({ id: step.id, op: step.op, status: "error", error: message });
+      runs.push({ ...base, status: "error", error: message });
     }
   }
   return { table, runs };
@@ -280,6 +288,8 @@ export interface PreviewOptions {
   rows?: number;
   /** True when the sample is only the start of the file. */
   partial: boolean;
+  /** Include the columns each step saw. The UI needs them; the LLM does not. */
+  columnsBefore?: boolean;
 }
 
 /** Runs the steps on the sample and describes each step and the resulting rows, ready for the LLM or the UI. */
@@ -317,7 +327,8 @@ export function buildPreview(
           : {}),
         ...(run.result?.failedExamples.length
           ? { failedExamples: run.result.failedExamples.map(clip) }
-          : {})
+          : {}),
+        ...(options.columnsBefore ? { columnsBefore: run.columnsBefore } : {})
       };
     }),
     columns: table.columns,

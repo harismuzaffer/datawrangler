@@ -6,7 +6,8 @@ import { profileCsv, type DatasetProfile } from "./profile";
 import { TOOL_SPECS } from "./prompts";
 import { tableFromRecords } from "./table";
 import type { RunSummary } from "./server";
-import { createTools, type ToolHost } from "./tools";
+import type { PipelineHost } from "./pipeline-actions";
+import { createTools } from "./tools";
 
 const CSV = "name,city,amount\n Ann ,Paris,$1\nBob,paris,2\n,,\n";
 
@@ -21,14 +22,16 @@ function fakeHost(
   let saved: Pipeline = profile ? safePipeline(profile) : emptyPipeline();
   let saves = 0;
   const runs: RunSummary[] = [];
-  const host: ToolHost = {
-    latestDataset: () => ({
-      id: "d1",
-      name: "people.csv",
-      status: options.status ?? "ready",
-      error: null,
-      profile
-    }),
+  const dataset = {
+    id: "d1",
+    name: "people.csv",
+    status: options.status ?? "ready",
+    error: null,
+    profile
+  };
+  const host: PipelineHost = {
+    latestDataset: () => dataset,
+    dataset: (id) => (id === "d1" ? dataset : null),
     loadPipeline: () => saved,
     savePipeline: (_, pipeline) => {
       saved = pipeline;

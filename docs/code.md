@@ -37,7 +37,8 @@ One line per file or module. Keep this list current.
 
 - `src/server.ts`: Worker entry and `CobblerAgent`: chat loop and LLM call, upload and download routes, `datasets`, `pipelines`, and `runs` tables, preview sample loading, starting full runs, synced state, workflow callbacks.
 - `src/prompts.ts`: system prompt (with the transform catalog) and the tool descriptions and input schemas.
-- `src/tools.ts`: the LLM tools. They reach the agent through the `ToolHost` interface. Tool input schemas are converted with zod (see `toolSchema`), not by the AI SDK.
+- `src/pipeline-actions.ts`: pipeline edits, checks on the sample, and starting a checked run, shared by the LLM tools and the pipeline panel. They reach the agent through the `PipelineHost` interface. `pipelineEditSchema` validates edits that come from the browser.
+- `src/tools.ts`: the LLM tools, built on `src/pipeline-actions.ts`. They work on the latest upload. Tool input schemas are converted with zod (see `toolSchema`), not by the AI SDK.
 - `src/upload.ts`: upload checks: body size limit while reading, binary-file check, file name and user ID schemas.
 - `src/profile-workflow.ts`: `ProfileWorkflow`: reads a CSV from R2, profiles it, reports the profile to the agent.
 - `src/run-workflow.ts`: `RunWorkflow`: runs a pipeline on a whole file from R2 and writes the result as a new file version.

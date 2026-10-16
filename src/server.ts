@@ -22,7 +22,8 @@ import type { RunParams } from "./run-workflow";
 import { SYSTEM_PROMPT } from "./prompts";
 import { z } from "zod";
 import { tableFromRecords, type Table } from "./table";
-import { createTools, type ToolHost } from "./tools";
+import type { DatasetInfo, PipelineHost } from "./pipeline-actions";
+import { createTools } from "./tools";
 import {
   assertLooksLikeText,
   fileNameSchema,
@@ -91,6 +92,16 @@ type RunRow = {
 
 const runIdSchema = z.uuid();
 
+function datasetInfo(row: DatasetRow): DatasetInfo {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    error: row.error,
+    profile: row.profile ? (JSON.parse(row.profile) as DatasetProfile) : null
+  };
+}
+
 function runSummary(run: RunRow): RunSummary {
   const report = run.report ? (JSON.parse(run.report) as RunReport) : null;
   return {
@@ -113,7 +124,7 @@ function countIssues(profile: DatasetProfile): number {
 /** One chat agent per user. Chat history and datasets persist in the agent's SQLite storage. */
 export class CobblerAgent
   extends AIChatAgent<Env, AgentState>
-  implements ToolHost
+  implements PipelineHost
 {
   initialState: AgentState = { datasets: [] };
   /** Preview samples by dataset ID. Files never change after upload, so a sample stays valid while the agent is awake. */
@@ -382,20 +393,15 @@ export class CobblerAgent
     this.setState({ ...this.state, datasets });
   }
 
-  latestDataset() {
+  latestDataset(): DatasetInfo | null {
     const [row] = this
       .sql<DatasetRow>`select * from datasets order by created_at desc limit 1`;
-    if (!row) return null;
-    const profile = row.profile
-      ? (JSON.parse(row.profile) as DatasetProfile)
-      : null;
-    return {
-      id: row.id,
-      name: row.name,
-      status: row.status,
-      error: row.error,
-      profile
-    };
+    return row ? datasetInfo(row) : null;
+  }
+
+  dataset(id: string): DatasetInfo | null {
+    const [row] = this.sql<DatasetRow>`select * from datasets where id = ${id}`;
+    return row ? datasetInfo(row) : null;
   }
 
   latestRun(datasetId: string): RunSummary | null {

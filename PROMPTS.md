@@ -86,3 +86,7 @@ i think lets give mistral small 3.1 a try
 ## 2026-10-16 11:25 IST
 
 /goal run the pipeline on the whole file in a workflow, and then download the result.
+
+## 2026-10-16 11:54 IST
+
+i am going to test datacobbler. You can start the next goal i.e. a pipeline panel where you can see, edit, preview and run steps without the chat
