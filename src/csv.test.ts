@@ -4,12 +4,15 @@ import {
   decodeCsvBytes,
   parseCsv,
   parseSample,
-  SAMPLE_ROWS
+  SAMPLE_ROWS,
+  writeCsv
 } from "./csv";
 import { MAX_COLUMNS } from "./limits";
+import { tableFromRecords } from "./table";
 
 const bytes = (...values: number[]) => new Uint8Array(values);
 const utf8 = (text: string) => new TextEncoder().encode(text);
+const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
 describe("decodeCsvBytes", () => {
   it("reads plain UTF-8", () => {
@@ -170,5 +173,41 @@ describe("parseSample", () => {
     expect(
       parseSample(latin, { ...options, encoding: "windows-1252" })
     ).toEqual([["a"], ["café"]]);
+  });
+});
+
+describe("writeCsv", () => {
+  it("quotes only the fields that need it, with CRLF line ends", () => {
+    expect(
+      decode(
+        writeCsv({
+          columns: ["name", 'say "hi"'],
+          rows: [
+            [" Ann", "a,b"],
+            ["Bob", "two\nlines"]
+          ]
+        })
+      )
+    ).toBe('name,"say ""hi"""\r\n" Ann","a,b"\r\nBob,"two\nlines"\r\n');
+  });
+
+  it("reads back to the same table, including empty rows and a header-only table", () => {
+    for (const records of [
+      [
+        ["a", "b"],
+        ["1", "x;y"],
+        ["", ""],
+        ["=1+2", "\u{200B}z"]
+      ],
+      [["only"], [""], ["v"]],
+      [["a", "b"]],
+      // More rows than one write chunk.
+      [["n"], ...Array.from({ length: 12_001 }, (_, i) => [String(i)])]
+    ]) {
+      const table = tableFromRecords(records);
+      expect(tableFromRecords(parseCsv(decode(writeCsv(table))).rows)).toEqual(
+        table
+      );
+    }
   });
 });

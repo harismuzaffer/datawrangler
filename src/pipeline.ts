@@ -168,11 +168,18 @@ export function runSteps(
       ? steps.length - 1
       : steps.findIndex((s) => s.id === upToStepId);
   if (last === -1) throw new PipelineError(`There is no step "${upToStepId}".`);
+  return applySteps(cloneTable(input), steps.slice(0, last + 1));
+}
 
-  let table = cloneTable(input);
+/** Runs steps on the table itself, changing it. */
+function applySteps(
+  input: Table,
+  steps: Step[]
+): { table: Table; runs: StepRun[] } {
+  let table = input;
   const runs: StepRun[] = [];
   let failed = false;
-  for (const step of steps.slice(0, last + 1)) {
+  for (const step of steps) {
     if (failed) {
       runs.push({ id: step.id, op: step.op, status: "skipped" });
       continue;
@@ -221,6 +228,42 @@ export function describeRun(run: StepRun): string {
   if (parts.length === 0) return "No changes.";
   const sentence = parts.join(", ");
   return `${sentence[0].toUpperCase()}${sentence.slice(1)}.`;
+}
+
+/** What a full run did: the size of the result and one sentence per step. Small enough to store and show. */
+export interface RunReport {
+  rowCount: number;
+  columns: string[];
+  steps: { id: string; op: TransformName; summary: string }[];
+}
+
+/**
+ * Runs every step on the whole table and describes what each step did.
+ * Changes `input` instead of copying it, because a whole file can be large; do not use `input` afterwards.
+ * Throws a PipelineError naming the first step that fails, because a partly cleaned file must not be saved.
+ */
+export function runPipeline(
+  input: Table,
+  steps: Step[]
+): { table: Table; report: RunReport } {
+  const { table, runs } = applySteps(input, steps);
+  const failed = runs.find((run) => run.status === "error");
+  if (failed)
+    throw new PipelineError(
+      `Step ${failed.id} (${failed.op}) failed on the whole file: ${failed.error}`
+    );
+  return {
+    table,
+    report: {
+      rowCount: table.rows.length,
+      columns: table.columns,
+      steps: runs.map((run) => ({
+        id: run.id,
+        op: run.op,
+        summary: describeRun(run)
+      }))
+    }
+  };
 }
 
 const PREVIEW_CELL_LENGTH = 60;

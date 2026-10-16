@@ -1,5 +1,6 @@
 import Papa from "papaparse";
 import { MAX_COLUMNS } from "./limits";
+import type { Table } from "./table";
 
 export type Encoding = "utf-8" | "utf-16le" | "utf-16be" | "windows-1252";
 
@@ -163,4 +164,30 @@ export function parseSample(
   else if (records.length > 1 && last.length === 1 && last[0] === "")
     records.pop();
   return records.slice(0, SAMPLE_ROWS + 1);
+}
+
+/** Rows per chunk when writing CSV, so the whole file never has to exist as one string. */
+const WRITE_CHUNK_ROWS = 5000;
+
+/**
+ * Writes a table as UTF-8 CSV bytes: comma-separated, CRLF line ends, and a line end after the last row.
+ * Fields are quoted only when needed (delimiter, quote, line break, or spaces at either end).
+ * Cell values are written as they are; nothing is escaped for spreadsheet formulas.
+ */
+export function writeCsv(table: Table): Uint8Array {
+  const encoder = new TextEncoder();
+  const parts = [encoder.encode(Papa.unparse([table.columns]) + "\r\n")];
+  for (let i = 0; i < table.rows.length; i += WRITE_CHUNK_ROWS) {
+    const rows = table.rows.slice(i, i + WRITE_CHUNK_ROWS);
+    parts.push(
+      encoder.encode(Papa.unparse(rows, { newline: "\r\n" }) + "\r\n")
+    );
+  }
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
 }

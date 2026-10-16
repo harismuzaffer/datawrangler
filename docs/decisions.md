@@ -11,7 +11,7 @@ Decisions with reasons, known limitations, and open questions. Rewrite entries w
   Reason: all three have small size limits.
 - **Every dataset version is immutable** (`{user}/{dataset}/v0.csv`, `v1.csv`, ...). This gives undo for free.
 - **One agent per user,** not one per dataset. Reason: memory and pipelines are shared across all of a user's datasets.
-- **CSV in, CSV out.** No other formats in v1.
+- **CSV in, CSV out.** No other formats in v1. The output is UTF-8 without a byte order mark, comma-separated, with CRLF line ends (the CSV standard, RFC 4180) and quotes only where needed, whatever the input used. Cell values are written as they are: a cell like `=1+2` is not escaped, because changing it would change the user's data.
 - **Max upload: 5 MB.** At this size a full run fits in Worker memory.
 
 ## Data flow
@@ -119,7 +119,8 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **Step IDs** are `s1`, `s2`, … from a counter, so a removed step's ID is never reused. Positions in tools are 1-based.
 - **Parameters are validated** when a step is added or changed: unknown transform, wrong types, and unknown keys (often a typo) are refused with the transform's usage text, so the LLM can correct itself.
 - **`updateStep` merges** the new parameters into the old ones; `null` removes a parameter. An edited automatic step is no longer marked automatic.
-- **A run stops at the first failing step.** The steps after it are marked skipped, because they would see a different table.
+- **A run stops at the first failing step.** The steps after it are marked skipped, because they would see a different table. A full run that has a failing step gives no output file: a partly cleaned file must not look finished.
+- **Memory of a full run.** A 5 MB file (69,000 rows, 8 columns) with 6 steps took 0.8 s in Node. The run changes the parsed table in place instead of copying it, and the CSV is written in chunks of 5,000 rows straight to bytes. This keeps the extra memory near 30 MB, well inside the Worker's 128 MB.
 - **Safe steps** come from the profile, only for the affected columns, in this order: remove invisible characters, trim, collapse spaces, drop empty rows.
 
 ## Risks and limitations

@@ -8,6 +8,7 @@ import {
   moveStep,
   PipelineError,
   removeStep,
+  runPipeline,
   runSteps,
   safePipeline,
   updateStep,
@@ -159,6 +160,40 @@ describe("runSteps", () => {
       "Removed 1 row.",
       "Renamed city to town."
     ]);
+  });
+});
+
+describe("runPipeline", () => {
+  it("runs every step and reports the result size and what each step did", () => {
+    const p = build(
+      ["trim", { columns: ["name"] }],
+      ["dropEmptyRows", {}],
+      ["dedupe", {}]
+    );
+    const { table, report } = runPipeline(sample(), p.steps);
+    expect(table.rows).toEqual([
+      ["Ann", "Paris", "$1,200"],
+      ["Bob", "paris", "300"]
+    ]);
+    expect(report).toEqual({
+      rowCount: 2,
+      columns: ["name", "city", "amount"],
+      steps: [
+        { id: "s1", op: "trim", summary: "Changed 1 cell." },
+        { id: "s2", op: "dropEmptyRows", summary: "Removed 1 row." },
+        { id: "s3", op: "dedupe", summary: "Removed 1 row." }
+      ]
+    });
+  });
+
+  it("refuses to give a result when a step fails", () => {
+    const p = build(
+      ["renameColumn", { column: "city", to: "town" }],
+      ["trim", { columns: ["city"] }]
+    );
+    expect(() => runPipeline(sample(), p.steps)).toThrow(
+      /Step s2 \(trim\) failed on the whole file: .*no column "city"/
+    );
   });
 });
 
