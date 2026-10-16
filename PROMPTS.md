@@ -90,3 +90,7 @@ i think lets give mistral small 3.1 a try
 ## 2026-10-16 11:54 IST
 
 i am going to test datacobbler. You can start the next goal i.e. a pipeline panel where you can see, edit, preview and run steps without the chat
+
+## 2026-10-16 12:20 IST
+
+/goal lets implement memory (preferences), plus pipeline export and import. after this i will test the app end to end based on what we settled on earlier

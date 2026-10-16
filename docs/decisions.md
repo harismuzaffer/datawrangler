@@ -64,6 +64,12 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 - **A rejected run reaches the model as "Tool execution was denied."** The prompt says what that means. Without that line, Mistral claimed the cleaned file was ready, or that no file was uploaded: the agent prunes older tool results from the history, so the model no longer saw the profile. With it, 4 of 4 rejected runs got a truthful reply (checked 2026-10-16).
 - Export, import, and download are UI buttons only.
 
+## Pipeline files and reuse
+
+- **File format:** JSON with `format: "datacobbler-pipeline"`, `version: 1`, `source` (the CSV it was made for), `exportedAt`, and `steps` as `{ op, params }`. Step IDs are left out; an imported pipeline gets new ones.
+- **Checks on import:** at most 256 KB and 100 steps, the format and version must match, and each step goes through the same checks as an added step. An error names the step number.
+- **Missing columns.** Before a pipeline is used on another file, the columns its steps use are compared with the file's columns. A column made by an earlier step (a rename or a new column) counts as present. Letter case is ignored when only one column matches, as in steps. The user maps each missing column to a real one, or removes it: it is taken out of column lists, and a step left with nothing to work on is dropped.
+
 ## Pipeline panel
 
 - **The panel calls the agent directly** (callables, no LLM): `getTransformCatalog`, `getPipelineView`, `editPipelineStep`, and `runPipelineNow`. Their arguments come from the browser, so the dataset ID and each edit are checked with zod, and edits go through the same checks as the chat tools.
