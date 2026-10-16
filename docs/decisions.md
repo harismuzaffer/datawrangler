@@ -75,7 +75,7 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 
 ## Model and streaming workaround
 
-- **Model:** `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Reason: it works on the free plan. The starter's Kimi model needs a paid plan.
+- **Model:** `@cf/mistralai/mistral-small-3.1-24b-instruct` (since 2026-10-16). Reason: it made the right tool calls in 45 of 45 test chats through the agent (the same 6 prompts as the Llama lines below), with no leaks, and it calls `getProfile` before editing steps instead of guessing step IDs. Replies took 4 to 20 s (median 15 s for the four-step request). Before, it was `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, picked because it works on the free plan; the starter's Kimi model needs a paid plan.
 - **Stream fix (`src/ai-binding.ts`).** `workers-ai-provider` (3.3.1, and still in 4.0.0) duplicates text and tool-call arguments when streaming from models that send each chunk in both OpenAI and native Workers AI formats (Llama, Qwen, Mistral). Tool calls then fail to parse, and the model never answers. We wrap the AI binding and drop the native copies when the OpenAI-style delta is present. Other chunks pass through unchanged, so any model can be used. Tested by hand with Llama 3.3, Llama 4 Scout, Qwen3, Mistral Small 3.1, gpt-oss-120b, and GLM-4.7-flash.
 - **Tool calling differs a lot by model** (tested on 2026-10-15 with the same prompt, tools, and messy file: "make city title case, normalize amount, remove duplicates, then preview"). Before the schema fix below, Llama 3.3 70B wrote its tool calls as plain text, so nothing ran. Mistral Small 3.1 (14 s), gpt-oss-120b (24 s), and GLM-4.7-flash (39 s) did every step right. Qwen3 30B did too, but showed its `<think>` text in the reply. Llama 4 Scout added steps twice and sent invalid input.
 - **Tool schemas are converted with zod, not by the AI SDK.** The AI SDK's zod conversion sets `additionalProperties: false` on every object, so the model was told `addStep.params` must be empty. Llama follows the schema strictly, could not make a valid call, and wrote the call as text instead (8 of 8 times through the AI SDK). With the same request but an open `params` schema, sent directly to Workers AI, Llama made proper tool calls 11 of 12 times when streaming and 15 of 16 times when not. `src/tools.ts` now builds each tool's JSON schema with `z.toJSONSchema` and passes it through the AI SDK's `jsonSchema()` with zod validation. The request the agent sends now matches the direct one exactly. Confirmed through the agent on 2026-10-16: 28 of 30 chats made real tool calls (see the leak line below).
@@ -136,6 +136,6 @@ Built: `getProfile`, `addStep`, `updateStep`, `removeStep`, `moveStep`, `preview
 
 ## Open questions
 
-- Which model to use by default: Llama 3.3 (tool calls work, but it leaks multi-call replies and guesses step IDs), or Mistral Small 3.1 / gpt-oss-120b (see Model above). A fix that helps any model: send the current pipeline with each chat turn, so the model does not have to guess.
+- Send the current pipeline with each chat turn, so a model does not have to look up or guess step IDs? Mistral does not need it today; it would help a weaker model.
 
 - Should the profile panel let the user pick an older upload? Today it and `getProfile` use the latest one.

@@ -287,7 +287,7 @@ export class CobblerAgent
     const workersai = createWorkersAI({ binding: withStreamFix(this.env.AI) });
 
     const result = streamText({
-      model: workersai("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      model: workersai("@cf/mistralai/mistral-small-3.1-24b-instruct", {
         sessionAffinity: this.sessionAffinity
       }),
       system: SYSTEM_PROMPT,

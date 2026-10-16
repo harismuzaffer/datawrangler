@@ -74,3 +74,7 @@ i have upgraded the workers AI plan. Lets continue with llama and confirm the fi
 ## 2026-10-16 11:08 IST
 
 continue
+
+## 2026-10-16 11:20 IST
+
+i think lets give mistral small 3.1 a try
