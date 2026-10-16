@@ -8,6 +8,11 @@
   "main": "src/server.ts",
   "compatibility_date": "2026-06-11",
   "compatibility_flags": ["nodejs_compat"],
+  // Applies to requests and to each workflow step. Profiling a 5 MB file takes about 1 s of CPU, and a full run more;
+  // 60 s leaves room. Needs the Workers Paid plan.
+  "limits": {
+    "cpu_ms": 60000
+  },
   "ai": {
     "binding": "AI",
     "remote": true

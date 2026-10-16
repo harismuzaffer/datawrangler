@@ -31,7 +31,7 @@ Details and reasons: [docs/decisions.md](docs/decisions.md).
 
 ## Setup
 
-Requirements: Node.js 22 or later and a Cloudflare account. The free plan is enough.
+Requirements: Node.js 22 or later and a Cloudflare account. The free plan is enough for local use; a deploy needs Workers Paid (see [Deploy](#deploy)).
 
 ```bash
 npm install
@@ -57,19 +57,36 @@ Open [http://localhost:5173](http://localhost:5173).
 
 ## Deploy
 
+Requirements: the Workers Paid plan. `wrangler.jsonc` sets `limits.cpu_ms` to 60 s, because profiling a 5 MB file needs about 1 s of CPU and the free plan allows 10 ms. See [docs/decisions.md](docs/decisions.md#risks-and-limitations).
+
 1. Create the R2 bucket (first deploy only):
 
    ```bash
    npx wrangler r2 bucket create datacobbler-files
    ```
 
-2. Build and deploy the Worker:
+2. Check the build without deploying:
+
+   ```bash
+   npx vite build && npx wrangler deploy --dry-run
+   ```
+
+   The output lists five bindings: `CobblerAgent`, `PROFILE_WORKFLOW`, `RUN_WORKFLOW`, `FILES`, and `AI`.
+
+3. Build and deploy the Worker:
 
    ```bash
    npm run deploy
    ```
 
-Parsing a 5 MB file needs about 1 s of CPU, so large uploads need the Workers Paid plan. See [docs/decisions.md](docs/decisions.md#risks-and-limitations).
+   Wrangler prints the URL, like `https://datacobbler.<your-subdomain>.workers.dev`.
+
+4. Protect the URL with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/). The app has no login of its own, so without Access anyone with the URL can use it and your Workers AI quota.
+   1. In the Cloudflare dashboard, go to **Workers & Pages** and select `datacobbler`.
+   2. Go to **Settings** > **Domains & Routes**.
+   3. On the `workers.dev` row, enable **Cloudflare Access**.
+   4. Open **Manage Cloudflare Access** and set the policy to allow only your email addresses.
+   5. Open the URL in a private window. Check that it asks you to sign in, and that chat, upload, and download work after you sign in.
 
 ## Docs
 

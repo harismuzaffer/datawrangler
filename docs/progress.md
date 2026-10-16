@@ -5,6 +5,7 @@
 - Architecture, pipeline model, transform list, and LLM tool design agreed. See [decisions.md](decisions.md).
 - Vitest set up (`npm test`).
 - Fixed streamed tool calls failing on Llama and other Workers AI models (checked by hand in `npm run dev`). See [decisions.md](decisions.md#model-and-streaming-workaround).
+- Deploy prepared: R2 bucket `datacobbler-files` created, CPU limit set, dry run passes. The user deploys and sets up Cloudflare Access (steps in the README).
 - Model switched to gpt-oss-120b for the user's end-to-end test, with a higher output token limit so tool calls are not cut off. See [decisions.md](decisions.md#model-and-streaming-workaround).
 - Goal 6: memory and pipeline files. Preferences saved with approval (or typed in the Memory panel) and used in every chat; forget by text. Pipeline export and import as JSON, reuse of an earlier upload's steps (`loadPipeline`), with a column mapping when columns are missing. Checked by hand in a headless browser and with repeated scripted chats.
 - Goal 5: pipeline panel. See, add, edit (forms built from each transform's schema), move, remove, and preview steps, and run without the chat. Chat edits show up in the panel. Checked by hand in a headless browser.
